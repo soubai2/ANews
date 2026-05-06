@@ -1,0 +1,11 @@
+[project]
+name = "anews-agent"
+version = "0.1.0"
+description = "Desktop news push agent backend foundation"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+norecursedirs = ["pytest-cache-files-*", ".git", ".tmp", ".tmp_tests", ".worktrees"]
+pythonpath = ["src"]
+testpaths = ["tests"]

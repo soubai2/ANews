@@ -2,6 +2,9 @@
 .worktrees/
 __pycache__/
 .pytest_cache/
+pytest-cache-files-*/
+.tmp/
+.tmp_tests/
 *.pyc
 *.db
 node_modules/

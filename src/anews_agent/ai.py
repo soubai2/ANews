@@ -94,6 +94,7 @@ class DeepSeekProvider:
             },
             json={
                 "model": self.settings.model,
+                "stream": False,
                 "messages": [
                     {
                         "role": "system",

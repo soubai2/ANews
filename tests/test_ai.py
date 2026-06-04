@@ -72,6 +72,7 @@ def test_deepseek_provider_uses_chat_completions_shape_and_parses_json():
     assert client.requests[0]["url"] == "https://api.deepseek.com/chat/completions"
     assert client.requests[0]["headers"]["Authorization"] == "Bearer secret"
     assert client.requests[0]["json"]["model"] == "deepseek-v4-flash"
+    assert client.requests[0]["json"]["stream"] is False
     assert result.summary == "模型摘要"
     assert result.tags == ["AI", "chips"]
     assert result.entities == ["Example Company"]

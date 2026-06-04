@@ -461,6 +461,24 @@ class NewsRepository:
             ).fetchone()
         return _load_dt(row["value"]) if row is not None else None
 
+    def set_last_push_news_ids(self, news_ids: list[str]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_state (key, value)
+                VALUES ('last_push_news_ids', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (dump_list(news_ids),),
+            )
+
+    def get_last_push_news_ids(self) -> list[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_state WHERE key = 'last_push_news_ids'"
+            ).fetchone()
+        return load_list(row["value"]) if row is not None else []
+
     def _row_to_news(self, row: sqlite3.Row) -> NewsItem:
         return NewsItem(
             id=row["id"],

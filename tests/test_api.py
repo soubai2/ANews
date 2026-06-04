@@ -1,11 +1,11 @@
 from fastapi.testclient import TestClient
 
-from anews_agent.api.app import create_app
+import anews_agent.api.app as app_module
 from anews_agent.config import AppConfig
 
 
 def make_client(tmp_path, *, api_key=None, raise_server_exceptions=True):
-    app = create_app(
+    app = app_module.create_app(
         AppConfig(
             db_path=tmp_path / "anews.db",
             deepseek_api_key=api_key,
@@ -17,7 +17,7 @@ def make_client(tmp_path, *, api_key=None, raise_server_exceptions=True):
 
 
 def test_health_push_run_focus_follow_sources_preferences_and_ai_status(tmp_path):
-    app = create_app(
+    app = app_module.create_app(
         AppConfig(
             db_path=tmp_path / "anews.db",
             deepseek_api_key=None,
@@ -194,6 +194,38 @@ def test_add_source_missing_name_returns_422(tmp_path):
     response = client.post("/api/sources", json={"url": "mock://missing-name"})
 
     assert response.status_code == 422
+
+
+def test_create_app_starts_scheduler_when_enabled(tmp_path, monkeypatch):
+    events = []
+
+    class SpyScheduler:
+        def start(self):
+            events.append("start")
+
+        def shutdown(self, wait=False):
+            events.append(("shutdown", wait))
+
+    def fake_create_push_scheduler(push_job, *, interval_hours):
+        events.append(("created", interval_hours))
+        return SpyScheduler()
+
+    monkeypatch.setattr(app_module, "create_push_scheduler", fake_create_push_scheduler)
+    app = app_module.create_app(
+        AppConfig(
+            db_path=tmp_path / "anews.db",
+            deepseek_api_key=None,
+            deepseek_base_url="https://api.deepseek.com",
+            deepseek_model="deepseek-v4-flash",
+            push_interval_hours=2,
+        ),
+        enable_scheduler=True,
+    )
+
+    with TestClient(app):
+        assert events == [("created", 2), "start"]
+
+    assert events == [("created", 2), "start", ("shutdown", False)]
 
 
 def test_patch_source_missing_enabled_returns_422(tmp_path):

@@ -4,6 +4,7 @@ import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Protocol
+from urllib.parse import urlparse, urlunparse
 
 from anews_agent.ai import NewsAIService
 from anews_agent.domain import (
@@ -190,6 +191,8 @@ class NewsPushService:
             if inserted:
                 latest_items.append(stored_item)
 
+        self.repository.set_last_push_news_ids([item.id for item in latest_items])
+
         if not source_failed:
             self.repository.set_last_push_at(now)
 
@@ -209,9 +212,15 @@ class NewsPushService:
             replace(item, is_follow_update=True) if item.id in follow_update_ids else item
             for item in news_items
         ]
+        marked_by_id = {item.id: item for item in marked_items}
+        latest_items = [
+            marked_by_id[news_id]
+            for news_id in self.repository.get_last_push_news_ids()
+            if news_id in marked_by_id
+        ]
         last_push_at = self.repository.get_last_push_at()
         return PushBundle(
-            latest=self._sort_latest(marked_items),
+            latest=self._sort_latest(latest_items),
             relevant=self._sort_relevant(marked_items),
             follow_updates=self._sort_latest(
                 [item for item in marked_items if item.is_follow_update]
@@ -256,7 +265,7 @@ class NewsPushService:
         return source
 
     def _enrich_score_and_mark(self, news_items: list[NewsItem]) -> list[NewsItem]:
-        deduplicated = _deduplicate_by_id(news_items)
+        deduplicated = _deduplicate_by_event(news_items)
         enriched = [self.ai_service.apply_to_news(item) for item in deduplicated]
         follow_update_ids = {item.id for item in self._select_follow_updates(enriched)}
         scorer = ImportanceScorer(
@@ -290,11 +299,51 @@ class NewsPushService:
         )
 
 
-def _deduplicate_by_id(news_items: list[NewsItem]) -> list[NewsItem]:
-    deduplicated: dict[str, NewsItem] = {}
+def _deduplicate_by_event(news_items: list[NewsItem]) -> list[NewsItem]:
+    deduplicated: list[NewsItem] = []
+    seen_keys: set[str] = set()
     for item in news_items:
-        deduplicated.setdefault(item.id, item)
-    return list(deduplicated.values())
+        keys = _dedup_keys(item)
+        if seen_keys.intersection(keys):
+            continue
+        deduplicated.append(item)
+        seen_keys.update(keys)
+    return deduplicated
+
+
+def _dedup_keys(item: NewsItem) -> set[str]:
+    keys = {f"id:{item.id}"}
+    normalized_url = _normalize_url(item.url)
+    if normalized_url:
+        keys.add(f"url:{normalized_url}")
+    normalized_title = _normalize_event_title(item.title)
+    if len(normalized_title) >= 8:
+        keys.add(f"title:{normalized_title}|date:{item.published_at.date().isoformat()}")
+    return keys
+
+
+def _normalize_url(value: str) -> str:
+    try:
+        parsed = urlparse(value.strip())
+    except ValueError:
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return value.strip().casefold()
+    path = parsed.path.rstrip("/") or "/"
+    return urlunparse(
+        (
+            parsed.scheme.casefold(),
+            parsed.netloc.casefold(),
+            path,
+            "",
+            "",
+            "",
+        )
+    )
+
+
+def _normalize_event_title(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", value.casefold()))
 
 
 def _matches_follow(news: NewsItem, follow: FollowedStory) -> bool:

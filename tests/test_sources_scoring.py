@@ -56,12 +56,50 @@ def test_deterministic_source_keeps_sample_identity_across_overlapping_windows()
 
 def test_url_source_adapter_records_clear_failure():
     source = Source.from_url(name="Bad Source", url="https://bad.example", source_type="news")
-    adapter = URLSourceAdapter(source=source)
+    adapter = URLSourceAdapter(source=source, fetch_text=lambda url: (_ for _ in ()).throw(RuntimeError("network down")))
 
     with pytest.raises(RuntimeError) as error:
         adapter.fetch(datetime.now(timezone.utc), datetime.now(timezone.utc))
 
-    assert "real crawling is not enabled" in str(error.value)
+    assert "Source Bad Source fetch failed: network down" in str(error.value)
+
+
+def test_url_source_adapter_parses_rss_items_inside_window():
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(
+        name="Company RSS",
+        url="https://example.com/rss.xml",
+        source_type="rss",
+        user_specified=True,
+    )
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Company News</title>
+        <item>
+          <title>AI chip product ships</title>
+          <link>https://example.com/news/ai-chip</link>
+          <description>Company shipped a new AI chip product.</description>
+          <pubDate>Thu, 04 Jun 2026 09:30:00 GMT</pubDate>
+        </item>
+        <item>
+          <title>Old product note</title>
+          <link>https://example.com/news/old</link>
+          <description>Old news.</description>
+          <pubDate>Wed, 03 Jun 2026 09:30:00 GMT</pubDate>
+        </item>
+      </channel>
+    </rss>
+    """
+    adapter = URLSourceAdapter(source=source, fetch_text=lambda url: rss)
+
+    items = adapter.fetch(now - timedelta(hours=2), now + timedelta(minutes=10))
+
+    assert [item.title for item in items] == ["AI chip product ships"]
+    assert items[0].source_id == source.id
+    assert items[0].source_name == "Company RSS"
+    assert items[0].url == "https://example.com/news/ai-chip"
+    assert items[0].summary == "Company shipped a new AI chip product."
 
 
 def test_importance_scorer_adds_scores_and_reasons():

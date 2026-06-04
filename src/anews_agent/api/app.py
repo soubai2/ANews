@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 from anews_agent.ai import NewsAIService
 from anews_agent.config import AppConfig
 from anews_agent.domain import AISettings, Source, SourceType
+from anews_agent.scheduler import create_push_scheduler
 from anews_agent.services import FollowService, NewsPushService, PreferenceService, SourceService
 from anews_agent.sources import DeterministicNewsSource, URLSourceAdapter
 from anews_agent.storage import NewsRepository
@@ -41,12 +43,31 @@ class AISettingsPatchRequest(BaseModel):
     fallback_enabled: bool | None = None
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = False) -> FastAPI:
     resolved_config = config or AppConfig.from_env()
     repository = NewsRepository(resolved_config.db_path)
     _sync_ai_settings_with_config(repository, resolved_config)
 
-    app = FastAPI(title="ANews Agent API")
+    scheduler = (
+        create_push_scheduler(
+            lambda: _run_scheduled_push(repository, resolved_config),
+            interval_hours=resolved_config.push_interval_hours,
+        )
+        if enable_scheduler
+        else None
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if scheduler is not None:
+            scheduler.start()
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                scheduler.shutdown(wait=False)
+
+    app = FastAPI(title="ANews Agent API", lifespan=lifespan if scheduler is not None else None)
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=LOCAL_CORS_ORIGIN_REGEX,
@@ -55,6 +76,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     )
     app.state.config = resolved_config
     app.state.repository = repository
+    if scheduler is not None:
+        app.state.scheduler = scheduler
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -200,6 +223,12 @@ def build_push_service(
             api_key=config.deepseek_api_key,
         ),
     )
+
+
+def _run_scheduled_push(repository: NewsRepository, config: AppConfig) -> None:
+    now = _utc_now()
+    service = build_push_service(repository, config, now=now)
+    service.run_once(now)
 
 
 def serialize(obj: Any) -> Any:

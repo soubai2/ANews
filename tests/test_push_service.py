@@ -89,6 +89,45 @@ def test_push_service_enriches_scores_deduplicates_and_advances_state(tmp_path):
     assert repo.get_source(source.id).last_success_at == now
 
 
+def test_push_service_deduplicates_same_event_across_sources(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    first_source = Source.from_url(name="First Tech", url="mock://first", source_type="mock")
+    second_source = Source.from_url(name="Second Tech", url="mock://second", source_type="mock")
+    repo.upsert_source(first_source)
+    repo.upsert_source(second_source)
+    first = make_news(
+        "AI chip launch",
+        "https://example.com/news/ai-chip-launch?utm_source=feed",
+        now,
+        first_source,
+    )
+    same_url = make_news(
+        "AI chip launch updated",
+        "https://example.com/news/ai-chip-launch",
+        now,
+        second_source,
+    )
+    same_title = make_news(
+        "AI chip launch",
+        "https://second.example/story/123",
+        now,
+        second_source,
+    )
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[
+            FakeSource(first_source, [first]),
+            FakeSource(second_source, [same_url, same_title]),
+        ],
+        ai_service=make_ai_service(),
+    ).run_once(now)
+
+    assert [news.id for news in bundle.latest] == [first.id]
+    assert [news.id for news in repo.list_news_for_day(now.date())] == [first.id]
+
+
 def test_push_failure_does_not_advance_last_push_at(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     previous = datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc)
@@ -349,7 +388,7 @@ def test_partial_failure_retry_does_not_return_previous_success_as_latest_again(
     assert retry_bundle.latest == []
 
 
-def test_current_bundle_sorts_latest_by_date_and_relevant_by_score(tmp_path):
+def test_current_bundle_uses_last_run_latest_and_sorts_relevant_by_score(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
     source = Source.from_url(name="Example Tech", url="mock://example", source_type="mock")
@@ -361,6 +400,7 @@ def test_current_bundle_sorts_latest_by_date_and_relevant_by_score(tmp_path):
     )
     repo.upsert_news(older_high)
     repo.upsert_news(newer_low)
+    repo.set_last_push_news_ids([newer_low.id])
 
     bundle = NewsPushService(
         repository=repo,
@@ -368,8 +408,23 @@ def test_current_bundle_sorts_latest_by_date_and_relevant_by_score(tmp_path):
         ai_service=make_ai_service(),
     ).current_bundle(now)
 
-    assert [news.id for news in bundle.latest] == [newer_low.id, older_high.id]
+    assert [news.id for news in bundle.latest] == [newer_low.id]
     assert [news.id for news in bundle.relevant] == [older_high.id, newer_low.id]
+
+
+def test_current_bundle_has_empty_latest_without_last_run_state(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Example Tech", url="mock://example", source_type="mock")
+    repo.upsert_news(make_news("Stored item", "https://example.com/stored", now, source))
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[],
+        ai_service=make_ai_service(),
+    ).current_bundle(now)
+
+    assert bundle.latest == []
 
 
 def test_current_bundle_uses_now_for_next_push_when_state_is_empty(tmp_path):

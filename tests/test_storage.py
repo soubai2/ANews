@@ -1,52 +1,78 @@
 from datetime import datetime, timezone
-from pathlib import Path
-from uuid import uuid4
 
-from anews_agent.models import NewsItem, UserPreference
+from anews_agent.domain import AISettings, NewsItem, Source, UserPreference
 from anews_agent.storage import NewsRepository
-
-
-def make_db_path() -> Path:
-    root = Path(".tmp_tests")
-    root.mkdir(exist_ok=True)
-    return root / f"{uuid4().hex}.db"
 
 
 def make_news(title: str, url: str, published_at: datetime) -> NewsItem:
     return NewsItem.from_raw(
         title=title,
         url=url,
-        source="Example News",
+        source_name="Example Tech",
         published_at=published_at,
         fetched_at=published_at,
         summary=f"Summary for {title}",
-        tags=["ai", "company"],
+        tags=["ai", "chips"],
         entities=["Example Company"],
         category="technology",
     )
 
 
-def test_repository_upserts_news_and_returns_daily_pool():
-    repo = NewsRepository(make_db_path())
-    published_at = datetime(2026, 5, 6, 9, 0, tzinfo=timezone.utc)
-    item = make_news("Example AI update", "https://example.com/a", published_at)
+def test_repository_persists_news_sources_preferences_follows_and_ai_settings(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    source = Source.from_url(
+        name="Example Tech",
+        url="https://example.com",
+        source_type="news",
+        user_specified=True,
+    )
+    news = make_news("AI chip supply update", "https://example.com/a", now)
 
-    assert repo.upsert_news(item) is True
-    assert repo.upsert_news(item) is False
+    repo.upsert_source(source)
+    assert repo.upsert_news(news) is True
+    assert repo.upsert_news(news) is False
+    repo.upsert_preference(
+        UserPreference.from_value(
+            kind="topic",
+            value="AI chips",
+            weight=1.2,
+            created_from="manual",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    follow = repo.follow_news(news.id, now)
+    repo.set_ai_settings(
+        AISettings(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+            enabled=True,
+            fallback_enabled=True,
+            api_key_configured=True,
+        )
+    )
 
-    daily_news = repo.list_news_for_day(published_at.date())
-
-    assert [news.id for news in daily_news] == [item.id]
-    assert daily_news[0].tags == ["ai", "company"]
-    assert daily_news[0].entities == ["Example Company"]
-
-
-def test_repository_stores_preferences_and_last_push_state():
-    repo = NewsRepository(make_db_path())
-    pushed_at = datetime(2026, 5, 6, 10, 0, tzinfo=timezone.utc)
-
-    repo.add_preference(UserPreference(kind="topic", value="AI chips", weight=1.5))
-    repo.set_last_push_at(pushed_at)
-
+    assert repo.list_sources()[0].name == "Example Tech"
+    assert repo.list_news_for_day(now.date())[0].id == news.id
     assert repo.list_preferences()[0].value == "AI chips"
-    assert repo.get_last_push_at() == pushed_at
+    assert repo.list_follows()[0].id == follow.id
+    assert repo.get_ai_settings().api_key_configured is True
+
+
+def test_repository_tracks_push_state_and_source_failures(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Bad RSS", url="https://bad.example/rss", source_type="rss")
+
+    repo.upsert_source(source)
+    repo.mark_source_failure(source.id, now, "Connection failed")
+    repo.set_last_push_at(now)
+
+    stored_source = repo.get_source(source.id)
+
+    assert stored_source is not None
+    assert stored_source.last_failure_at == now
+    assert stored_source.failure_reason == "Connection failed"
+    assert repo.get_last_push_at() == now

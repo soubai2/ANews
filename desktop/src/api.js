@@ -20,6 +20,7 @@ export const api = {
   getPush: () => request("/api/push"),
   runPush: () => request("/api/push/run", { method: "POST" }),
   listNews: (query = "") => request(`/api/news?q=${encodeURIComponent(query)}`),
+  getNews: (id) => request(`/api/news/${id}`),
   focusNews: (id) => request(`/api/news/${id}/focus`, { method: "POST" }),
   followNews: (id) => request(`/api/news/${id}/follow`, { method: "POST" }),
   listSources: () => request("/api/sources"),

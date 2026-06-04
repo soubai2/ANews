@@ -230,6 +230,19 @@ export function App() {
     }
   }
 
+  async function openNews(item) {
+    if (!item?.id) return;
+    setStatus("正在打开详情");
+    try {
+      const news = await api.getNews(item.id);
+      setSelectedNews(news);
+      setStatus("已打开详情");
+    } catch (error) {
+      setSelectedNews(item);
+      setStatus(`打开详情失败：${formatError(error)}`);
+    }
+  }
+
   async function addSource(event) {
     event.preventDefault();
     if (!sourceForm.name.trim() || !sourceForm.url.trim()) return;
@@ -400,7 +413,7 @@ export function App() {
                 empty="暂无本轮新增新闻"
                 onFocus={focusNews}
                 onFollow={followNews}
-                onOpen={setSelectedNews}
+                onOpen={openNews}
               />
               <Section
                 title="相关"
@@ -408,7 +421,7 @@ export function App() {
                 empty="暂无高相关新闻"
                 onFocus={focusNews}
                 onFollow={followNews}
-                onOpen={setSelectedNews}
+                onOpen={openNews}
               />
               <Section
                 title="跟进"
@@ -416,7 +429,7 @@ export function App() {
                 empty="暂无跟进更新"
                 onFocus={focusNews}
                 onFollow={followNews}
-                onOpen={setSelectedNews}
+                onOpen={openNews}
               />
             </div>
           </>

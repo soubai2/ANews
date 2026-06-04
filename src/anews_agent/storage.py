@@ -29,12 +29,25 @@ def load_list(value: str | None) -> list[str]:
     return [str(item) for item in loaded]
 
 
+def to_utc_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def from_iso_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _dump_dt(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
+    return to_utc_iso(value) if value is not None else None
 
 
 def _load_dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+    return from_iso_datetime(value) if value else None
 
 
 class NewsRepository:
@@ -122,9 +135,26 @@ class NewsRepository:
 
     def upsert_news(self, item: Any) -> bool:
         source_name = getattr(item, "source_name", getattr(item, "source", ""))
-        source_id = getattr(item, "source_id", source_identity(source_name, item.url))
+        source_id = getattr(item, "source_id", None) or source_identity(source_name, item.url)
         recommendation_reasons = getattr(item, "recommendation_reasons", [])
         pushed = getattr(item, "pushed", False)
+        values = (
+            item.id,
+            item.title,
+            item.url,
+            source_id,
+            source_name,
+            to_utc_iso(item.published_at),
+            to_utc_iso(item.fetched_at),
+            item.summary,
+            dump_list(item.tags),
+            dump_list(item.entities),
+            item.category,
+            item.importance_score,
+            dump_list(recommendation_reasons),
+            int(item.is_follow_update),
+            int(pushed),
+        )
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -135,14 +165,36 @@ class NewsRepository:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
+                values,
+            )
+            if cursor.rowcount == 1:
+                return True
+            conn.execute(
+                """
+                UPDATE news_items
+                SET title = ?,
+                    url = ?,
+                    source_id = ?,
+                    source_name = ?,
+                    published_at = ?,
+                    fetched_at = ?,
+                    summary = ?,
+                    tags = ?,
+                    entities = ?,
+                    category = ?,
+                    importance_score = ?,
+                    recommendation_reasons = ?,
+                    is_follow_update = ?,
+                    pushed = ?
+                WHERE id = ?
+                """,
                 (
-                    item.id,
                     item.title,
                     item.url,
                     source_id,
                     source_name,
-                    item.published_at.isoformat(),
-                    item.fetched_at.isoformat(),
+                    to_utc_iso(item.published_at),
+                    to_utc_iso(item.fetched_at),
                     item.summary,
                     dump_list(item.tags),
                     dump_list(item.entities),
@@ -151,9 +203,10 @@ class NewsRepository:
                     dump_list(recommendation_reasons),
                     int(item.is_follow_update),
                     int(pushed),
+                    item.id,
                 ),
             )
-            return cursor.rowcount == 1
+            return False
 
     def get_news(self, news_id: str) -> NewsItem | None:
         with self._connect() as conn:
@@ -170,7 +223,7 @@ class NewsRepository:
                 WHERE published_at >= ? AND published_at < ?
                 ORDER BY published_at DESC
                 """,
-                (start.isoformat(), end.isoformat()),
+                (to_utc_iso(start), to_utc_iso(end)),
             ).fetchall()
         return [self._row_to_news(row) for row in rows]
 
@@ -203,9 +256,9 @@ class NewsRepository:
                     source_type = excluded.source_type,
                     user_specified = excluded.user_specified,
                     enabled = excluded.enabled,
-                    last_success_at = excluded.last_success_at,
-                    last_failure_at = excluded.last_failure_at,
-                    failure_reason = excluded.failure_reason
+                    last_success_at = COALESCE(excluded.last_success_at, sources.last_success_at),
+                    last_failure_at = COALESCE(excluded.last_failure_at, sources.last_failure_at),
+                    failure_reason = COALESCE(excluded.failure_reason, sources.failure_reason)
                 """,
                 (
                     source.id,
@@ -238,7 +291,7 @@ class NewsRepository:
                 SET last_success_at = ?, last_failure_at = NULL, failure_reason = NULL
                 WHERE id = ?
                 """,
-                (when.isoformat(), source_id),
+                (to_utc_iso(when), source_id),
             )
 
     def mark_source_failure(self, source_id: str, when: datetime, reason: str) -> None:
@@ -249,7 +302,7 @@ class NewsRepository:
                 SET last_failure_at = ?, failure_reason = ?
                 WHERE id = ?
                 """,
-                (when.isoformat(), reason, source_id),
+                (to_utc_iso(when), reason, source_id),
             )
 
     def upsert_preference(self, preference: UserPreference) -> None:
@@ -263,10 +316,10 @@ class NewsRepository:
                 ON CONFLICT(id) DO UPDATE SET
                     kind = excluded.kind,
                     value = excluded.value,
-                    weight = excluded.weight,
+                    weight = preferences.weight + excluded.weight,
                     created_from = excluded.created_from,
                     created_at = COALESCE(preferences.created_at, excluded.created_at),
-                    updated_at = excluded.updated_at
+                    updated_at = COALESCE(excluded.updated_at, preferences.updated_at)
                 """,
                 (
                     preference.id,
@@ -389,7 +442,7 @@ class NewsRepository:
                 VALUES ('last_push_at', ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value
                 """,
-                (pushed_at.isoformat(),),
+                (to_utc_iso(pushed_at),),
             )
 
     def get_last_push_at(self) -> datetime | None:
@@ -406,8 +459,8 @@ class NewsRepository:
             url=row["url"],
             source_id=row["source_id"],
             source_name=row["source_name"],
-            published_at=datetime.fromisoformat(row["published_at"]),
-            fetched_at=datetime.fromisoformat(row["fetched_at"]),
+            published_at=from_iso_datetime(row["published_at"]),
+            fetched_at=from_iso_datetime(row["fetched_at"]),
             summary=row["summary"],
             tags=load_list(row["tags"]),
             entities=load_list(row["entities"]),

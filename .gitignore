@@ -5,6 +5,7 @@ __pycache__/
 pytest-cache-files-*/
 .tmp/
 .tmp_tests/
+.tmp_*.log
 *.pyc
 *.db
 node_modules/

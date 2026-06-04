@@ -1,0 +1,25 @@
+{
+  "name": "anews-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "test:contracts": "node --test tests/*.test.mjs",
+    "electron": "electron .",
+    "start": "concurrently \"npm:dev\" \"wait-on http://127.0.0.1:5173 && npm:electron\""
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "concurrently": "^9.0.0",
+    "electron": "^35.0.0",
+    "lucide-react": "^0.468.0",
+    "vite": "^6.0.0",
+    "wait-on": "^8.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {}
+}

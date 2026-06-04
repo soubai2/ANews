@@ -12,10 +12,45 @@ PushRunStatus = Literal["running", "success", "failed"]
 FollowStatus = Literal["active", "cancelled"]
 
 
+class FrozenList(list):
+    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("FrozenList cannot be mutated")
+
+    append = _reject_mutation
+    clear = _reject_mutation
+    extend = _reject_mutation
+    insert = _reject_mutation
+    pop = _reject_mutation
+    remove = _reject_mutation
+    reverse = _reject_mutation
+    sort = _reject_mutation
+
+    def __delitem__(self, key: object) -> None:
+        self._reject_mutation()
+
+    def __iadd__(self, values: object) -> "FrozenList":
+        self._reject_mutation()
+        return self
+
+    def __imul__(self, value: object) -> "FrozenList":
+        self._reject_mutation()
+        return self
+
+    def __setitem__(self, key: object, value: object) -> None:
+        self._reject_mutation()
+
+
 def stable_id(prefix: str, *parts: str) -> str:
     identity = "|".join(part.strip().lower() for part in parts)
     digest = sha256(identity.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}_{digest}"
+
+
+def source_identity(name: str, url: str) -> str:
+    clean_url = url.strip()
+    parsed = urlparse(clean_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else clean_url
+    return stable_id("src", name.strip(), origin)
 
 
 def normalize_terms(values: list[str] | None) -> list[str]:
@@ -48,6 +83,13 @@ class NewsItem:
     is_follow_update: bool = False
     pushed: bool = False
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tags", FrozenList(self.tags))
+        object.__setattr__(self, "entities", FrozenList(self.entities))
+        object.__setattr__(
+            self, "recommendation_reasons", FrozenList(self.recommendation_reasons)
+        )
+
     @classmethod
     def from_raw(
         cls,
@@ -70,9 +112,7 @@ class NewsItem:
         clean_title = title.strip()
         clean_url = url.strip()
         clean_source_name = source_name.strip()
-        resolved_source_id = source_id or stable_id(
-            "src", clean_source_name, urlparse(clean_url).netloc
-        )
+        resolved_source_id = source_id or source_identity(clean_source_name, clean_url)
         return cls(
             id=stable_id("news", clean_source_name, clean_url, clean_title),
             title=clean_title,
@@ -124,7 +164,7 @@ class Source:
         clean_name = name.strip()
         clean_url = url.strip()
         return cls(
-            id=stable_id("src", clean_name, clean_url),
+            id=source_identity(clean_name, clean_url),
             name=clean_name,
             url=clean_url,
             source_type=source_type,
@@ -177,6 +217,10 @@ class FollowedStory:
     status: FollowStatus = "active"
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "keywords", FrozenList(self.keywords))
+        object.__setattr__(self, "entities", FrozenList(self.entities))
 
     @classmethod
     def from_news(cls, news: NewsItem, now: datetime) -> "FollowedStory":
@@ -244,6 +288,10 @@ class AIEnrichment:
     used_provider: str
     fallback_used: bool
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tags", FrozenList(self.tags))
+        object.__setattr__(self, "entities", FrozenList(self.entities))
+
 
 @dataclass(frozen=True)
 class PushRun:
@@ -263,6 +311,11 @@ class PushBundle:
     follow_updates: list[NewsItem]
     last_push_at: datetime | None = None
     next_push_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "latest", FrozenList(self.latest))
+        object.__setattr__(self, "relevant", FrozenList(self.relevant))
+        object.__setattr__(self, "follow_updates", FrozenList(self.follow_updates))
 
     @classmethod
     def empty(cls) -> "PushBundle":

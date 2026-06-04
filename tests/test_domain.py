@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from anews_agent.domain import (
     AISettings,
     NewsItem,
@@ -67,3 +69,43 @@ def test_source_preference_ai_settings_and_bundle_defaults():
     assert bundle.latest == []
     assert bundle.relevant == []
     assert bundle.follow_updates == []
+
+
+def test_news_item_default_source_id_matches_source_identity_for_same_origin():
+    published_at = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    source = Source.from_url(
+        name="Company Blog",
+        url="https://example.com/blog",
+        source_type="blog",
+        user_specified=True,
+    )
+    item = NewsItem.from_raw(
+        title="Company publishes product update",
+        url="https://example.com/blog/product-update",
+        source_name="Company Blog",
+        published_at=published_at,
+        fetched_at=published_at,
+        summary="The company published a product update.",
+    )
+
+    assert item.source_id == source.id
+
+
+def test_domain_list_fields_reject_in_place_mutation():
+    published_at = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    item = NewsItem.from_raw(
+        title="DeepSeek releases a new model",
+        url="https://example.com/deepseek-model",
+        source_name="Example Tech",
+        published_at=published_at,
+        fetched_at=published_at,
+        summary="DeepSeek released a new model for developers.",
+        tags=["ai", "model"],
+    )
+    bundle = PushBundle(latest=[item], relevant=[], follow_updates=[])
+
+    with pytest.raises(TypeError):
+        item.tags.append("release")
+
+    with pytest.raises(TypeError):
+        bundle.latest.clear()

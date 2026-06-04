@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,12 +62,6 @@ function isDevServerUrl(url) {
   }
 }
 
-function openExternalUrl(url) {
-  if (isHttpUrl(url)) {
-    void shell.openExternal(url);
-  }
-}
-
 async function loadApp(window) {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
@@ -92,15 +86,13 @@ async function createWindow() {
     },
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    openExternalUrl(url);
+  mainWindow.webContents.setWindowOpenHandler(() => {
     return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (isHttpUrl(url) && !isDevServerUrl(url)) {
       event.preventDefault();
-      openExternalUrl(url);
     }
   });
 

@@ -1,12 +1,13 @@
 const API_BASE = "http://127.0.0.1:8765";
 
 async function request(path, options = {}) {
+  const { headers = {}, ...requestOptions } = options;
   const response = await fetch(`${API_BASE}${path}`, {
+    ...requestOptions,
     headers: {
       "Content-Type": "application/json",
-      ...(options.headers || {}),
+      ...headers,
     },
-    ...options,
   });
   if (!response.ok) {
     const text = await response.text();

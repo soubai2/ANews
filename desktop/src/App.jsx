@@ -11,7 +11,7 @@ import {
   Star,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 
 const emptyBundle = {
@@ -169,12 +169,14 @@ export function App() {
   const [follows, setFollows] = useState([]);
   const [aiStatus, setAiStatus] = useState(null);
   const [selectedNews, setSelectedNews] = useState(null);
+  const [readerUrl, setReaderUrl] = useState("");
   const [sourceForm, setSourceForm] = useState({
     name: "",
     url: "",
     source_type: "news",
   });
   const [command, setCommand] = useState("");
+  const detailRequestRef = useRef(0);
 
   async function refreshAll() {
     try {
@@ -232,15 +234,33 @@ export function App() {
 
   async function openNews(item) {
     if (!item?.id) return;
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    setReaderUrl("");
     setStatus("正在打开详情");
     try {
       const news = await api.getNews(item.id);
+      if (detailRequestRef.current !== requestId) return;
       setSelectedNews(news);
       setStatus("已打开详情");
     } catch (error) {
+      if (detailRequestRef.current !== requestId) return;
       setSelectedNews(item);
       setStatus(`打开详情失败：${formatError(error)}`);
     }
+  }
+
+  function closeDetail() {
+    detailRequestRef.current += 1;
+    setSelectedNews(null);
+    setReaderUrl("");
+  }
+
+  function openOriginalInApp(event) {
+    event.preventDefault();
+    if (!selectedNews?.url) return;
+    setReaderUrl(selectedNews.url);
+    setStatus("正在应用内打开原文");
   }
 
   async function addSource(event) {
@@ -632,10 +652,13 @@ export function App() {
             aria-label="关闭详情"
             className="drawer-scrim"
             type="button"
-            onClick={() => setSelectedNews(null)}
+            onClick={closeDetail}
           />
-          <aside className="drawer" aria-label="新闻详情">
-            <button className="drawer__close" type="button" onClick={() => setSelectedNews(null)}>
+          <aside
+            className={readerUrl ? "drawer drawer--reader" : "drawer"}
+            aria-label="新闻详情"
+          >
+            <button className="drawer__close" type="button" onClick={closeDetail}>
               关闭
             </button>
             <p className="drawer__meta">
@@ -656,10 +679,31 @@ export function App() {
               ))}
             </div>
             {selectedNews.url && (
-              <a className="drawer-link" href={selectedNews.url}>
+              <a className="drawer-link" href={selectedNews.url} onClick={openOriginalInApp}>
                 <ExternalLink size={16} />
                 <span>在应用内打开原文</span>
               </a>
+            )}
+            {readerUrl && (
+              <div className="reader-panel">
+                <div className="reader-panel__bar">
+                  <span>{readerUrl}</span>
+                  <button type="button" onClick={() => setReaderUrl("")}>
+                    收起
+                  </button>
+                  <button type="button" onClick={() => setReaderUrl(selectedNews.url)}>
+                    重试
+                  </button>
+                </div>
+                <iframe
+                  className="reader-frame"
+                  src={readerUrl}
+                  title={selectedNews.title || "新闻原文"}
+                  sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+                  referrerPolicy="no-referrer-when-downgrade"
+                  onError={() => setStatus("原文无法在应用内显示，可重试")}
+                />
+              </div>
             )}
           </aside>
         </div>

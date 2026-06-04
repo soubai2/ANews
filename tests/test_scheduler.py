@@ -3,7 +3,7 @@ from anews_agent.scheduler import create_push_scheduler
 
 def test_create_push_scheduler_registers_two_hour_job():
     calls = []
-    scheduler = create_push_scheduler(lambda: calls.append("run"), interval_hours=2)
+    scheduler = create_push_scheduler(lambda: calls.append("run"))
     jobs = scheduler.get_jobs()
 
     assert len(jobs) == 1

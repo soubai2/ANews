@@ -121,7 +121,7 @@ class URLSourceAdapter:
             return False, []
 
         entries = _feed_entries(root)
-        if not entries:
+        if not entries and not _is_feed_document(root):
             return False, []
 
         parsed_items: list[NewsItem] = []
@@ -181,6 +181,17 @@ class URLSourceAdapter:
 
 def _feed_entries(root: ElementTree.Element) -> list[ElementTree.Element]:
     return root.findall(".//item") + root.findall(".//{http://www.w3.org/2005/Atom}entry")
+
+
+def _is_feed_document(root: ElementTree.Element) -> bool:
+    tag = _strip_namespace(root.tag).casefold()
+    if tag in {"rss", "feed", "rdf"}:
+        return True
+    return root.find("channel") is not None or root.find("{http://www.w3.org/2005/Atom}entry") is not None
+
+
+def _strip_namespace(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
 def _first_text(element: ElementTree.Element, tag: str) -> str:

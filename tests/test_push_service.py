@@ -166,6 +166,42 @@ def test_overlapping_window_deduplicates_event_against_stored_news(tmp_path):
     assert [news.id for news in repo.list_news_for_day(first_run_at.date())] == [original.id]
 
 
+def test_overlapping_window_deduplicates_stored_news_across_midnight(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    previous_day_at = datetime(2026, 6, 4, 23, 55, tzinfo=timezone.utc)
+    next_day_at = datetime(2026, 6, 5, 0, 5, tzinfo=timezone.utc)
+    source = Source.from_url(name="Example Tech", url="mock://example", source_type="mock")
+    repo.upsert_source(source)
+    stored = make_news(
+        "AI chip launch",
+        "https://example.com/news/ai-chip-launch?utm_source=feed",
+        previous_day_at,
+        source,
+    )
+    repo.upsert_news(stored)
+    duplicate = make_news(
+        "AI chip launch updated",
+        "https://example.com/news/ai-chip-launch?utm_source=site",
+        previous_day_at,
+        source,
+    )
+    next_day_item = make_news(
+        "New market update",
+        "https://example.com/news/new-market-update",
+        next_day_at,
+        source,
+    )
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[FakeSource(source, [next_day_item, duplicate])],
+        ai_service=make_ai_service(),
+    ).run_once(next_day_at)
+
+    assert [news.id for news in bundle.latest] == [next_day_item.id]
+    assert [news.id for news in repo.list_news_for_day(previous_day_at.date())] == [stored.id]
+
+
 def test_push_service_keeps_distinct_query_identity_articles(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)

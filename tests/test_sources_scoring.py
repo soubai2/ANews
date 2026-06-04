@@ -124,6 +124,21 @@ def test_url_source_adapter_does_not_fabricate_item_for_feed_with_only_old_entri
     assert items == []
 
 
+def test_url_source_adapter_does_not_fabricate_item_for_empty_rss_feed():
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Empty RSS", url="https://example.com/rss.xml", source_type="rss")
+    adapter = URLSourceAdapter(
+        source=source,
+        fetch_text=lambda url: """<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><title>Empty RSS</title></channel></rss>
+        """,
+    )
+
+    items = adapter.fetch(now - timedelta(hours=2), now + timedelta(minutes=10))
+
+    assert items == []
+
+
 def test_importance_scorer_adds_scores_and_reasons():
     now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
     news = NewsItem.from_raw(

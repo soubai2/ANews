@@ -278,9 +278,7 @@ class NewsPushService:
     def _enrich_score_and_mark(self, news_items: list[NewsItem]) -> list[NewsItem]:
         deduplicated = _deduplicate_by_event(
             news_items,
-            existing_items=self.repository.list_news_for_day(news_items[0].published_at.date())
-            if news_items
-            else [],
+            existing_items=self._existing_items_for_fetched_dates(news_items),
         )
         enriched = [self.ai_service.apply_to_news(item) for item in deduplicated]
         follow_update_ids = {item.id for item in self._select_follow_updates(enriched)}
@@ -295,6 +293,13 @@ class NewsPushService:
             scorer.score(replace(item, is_follow_update=item.id in follow_update_ids))
             for item in enriched
         ]
+
+    def _existing_items_for_fetched_dates(self, news_items: list[NewsItem]) -> list[NewsItem]:
+        items_by_id: dict[str, NewsItem] = {}
+        for published_date in {item.published_at.date() for item in news_items}:
+            for stored_item in self.repository.list_news_for_day(published_date):
+                items_by_id.setdefault(stored_item.id, stored_item)
+        return list(items_by_id.values())
 
     def _next_push_at(
         self, last_push_at: datetime | None, *, fallback: datetime | None = None

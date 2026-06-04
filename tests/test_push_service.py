@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -229,3 +229,16 @@ def test_current_bundle_sorts_latest_by_date_and_relevant_by_score(tmp_path):
 
     assert [news.id for news in bundle.latest] == [newer_low.id, older_high.id]
     assert [news.id for news in bundle.relevant] == [older_high.id, newer_low.id]
+
+
+def test_current_bundle_uses_now_for_next_push_when_state_is_empty(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[],
+        ai_service=make_ai_service(),
+    ).current_bundle(now)
+
+    assert bundle.next_push_at == now + timedelta(hours=2)

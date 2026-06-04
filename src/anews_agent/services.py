@@ -170,7 +170,7 @@ class NewsPushService:
                 [item for item in marked_items if item.is_follow_update]
             ),
             last_push_at=last_push_at,
-            next_push_at=self._next_push_at(last_push_at),
+            next_push_at=self._next_push_at(last_push_at, fallback=now),
         )
 
     def _select_follow_updates(self, news_items: list[NewsItem]) -> list[NewsItem]:
@@ -224,8 +224,11 @@ class NewsPushService:
             for item in enriched
         ]
 
-    def _next_push_at(self, last_push_at: datetime | None) -> datetime | None:
-        return last_push_at + timedelta(hours=2) if last_push_at is not None else None
+    def _next_push_at(
+        self, last_push_at: datetime | None, *, fallback: datetime | None = None
+    ) -> datetime | None:
+        base = last_push_at if last_push_at is not None else fallback
+        return base + timedelta(hours=2) if base is not None else None
 
     @staticmethod
     def _sort_latest(news_items: list[NewsItem]) -> list[NewsItem]:

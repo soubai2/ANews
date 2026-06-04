@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Protocol
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from anews_agent.ai import NewsAIService
 from anews_agent.domain import (
@@ -35,6 +35,17 @@ GENERIC_FOLLOW_TERMS = {
     "technology",
     "update",
     "updates",
+}
+
+TRACKING_QUERY_PREFIXES = ("utm_",)
+TRACKING_QUERY_KEYS = {
+    "fbclid",
+    "gclid",
+    "igshid",
+    "mc_cid",
+    "mc_eid",
+    "ref",
+    "spm",
 }
 
 
@@ -265,7 +276,12 @@ class NewsPushService:
         return source
 
     def _enrich_score_and_mark(self, news_items: list[NewsItem]) -> list[NewsItem]:
-        deduplicated = _deduplicate_by_event(news_items)
+        deduplicated = _deduplicate_by_event(
+            news_items,
+            existing_items=self.repository.list_news_for_day(news_items[0].published_at.date())
+            if news_items
+            else [],
+        )
         enriched = [self.ai_service.apply_to_news(item) for item in deduplicated]
         follow_update_ids = {item.id for item in self._select_follow_updates(enriched)}
         scorer = ImportanceScorer(
@@ -299,9 +315,13 @@ class NewsPushService:
         )
 
 
-def _deduplicate_by_event(news_items: list[NewsItem]) -> list[NewsItem]:
+def _deduplicate_by_event(
+    news_items: list[NewsItem], *, existing_items: list[NewsItem] | None = None
+) -> list[NewsItem]:
     deduplicated: list[NewsItem] = []
     seen_keys: set[str] = set()
+    for item in existing_items or []:
+        seen_keys.update(_dedup_keys(item))
     for item in news_items:
         keys = _dedup_keys(item)
         if seen_keys.intersection(keys):
@@ -330,13 +350,21 @@ def _normalize_url(value: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         return value.strip().casefold()
     path = parsed.path.rstrip("/") or "/"
+    query = urlencode(
+        [
+            (key, query_value)
+            for key, query_value in parse_qsl(parsed.query, keep_blank_values=True)
+            if not _is_tracking_query_key(key)
+        ],
+        doseq=True,
+    )
     return urlunparse(
         (
             parsed.scheme.casefold(),
             parsed.netloc.casefold(),
             path,
             "",
-            "",
+            query,
             "",
         )
     )
@@ -344,6 +372,11 @@ def _normalize_url(value: str) -> str:
 
 def _normalize_event_title(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", value.casefold()))
+
+
+def _is_tracking_query_key(key: str) -> bool:
+    normalized = key.casefold()
+    return normalized in TRACKING_QUERY_KEYS or normalized.startswith(TRACKING_QUERY_PREFIXES)
 
 
 def _matches_follow(news: NewsItem, follow: FollowedStory) -> bool:

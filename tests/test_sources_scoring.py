@@ -102,6 +102,28 @@ def test_url_source_adapter_parses_rss_items_inside_window():
     assert items[0].summary == "Company shipped a new AI chip product."
 
 
+def test_url_source_adapter_does_not_fabricate_item_for_feed_with_only_old_entries():
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Company RSS", url="https://example.com/rss.xml", source_type="rss")
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Old product note</title>
+          <link>https://example.com/news/old</link>
+          <description>Old news.</description>
+          <pubDate>Wed, 03 Jun 2026 09:30:00 GMT</pubDate>
+        </item>
+      </channel>
+    </rss>
+    """
+    adapter = URLSourceAdapter(source=source, fetch_text=lambda url: rss)
+
+    items = adapter.fetch(now - timedelta(hours=2), now + timedelta(minutes=10))
+
+    assert items == []
+
+
 def test_importance_scorer_adds_scores_and_reasons():
     now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
     news = NewsItem.from_raw(

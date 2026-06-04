@@ -128,6 +128,61 @@ def test_push_service_deduplicates_same_event_across_sources(tmp_path):
     assert [news.id for news in repo.list_news_for_day(now.date())] == [first.id]
 
 
+def test_overlapping_window_deduplicates_event_against_stored_news(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    first_run_at = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    retry_at = datetime(2026, 6, 4, 10, 30, tzinfo=timezone.utc)
+    first_source = Source.from_url(name="First Tech", url="mock://first", source_type="mock")
+    second_source = Source.from_url(name="Second Tech", url="mock://second", source_type="mock")
+    repo.upsert_source(first_source)
+    repo.upsert_source(second_source)
+    original = make_news(
+        "AI chip launch",
+        "https://example.com/news/ai-chip-launch?utm_source=feed",
+        first_run_at,
+        first_source,
+    )
+    duplicate_update = make_news(
+        "AI chip launch updated",
+        "https://example.com/news/ai-chip-launch?utm_source=site",
+        first_run_at,
+        second_source,
+    )
+    first_adapter = FakeSource(first_source, [original])
+    second_adapter = FakeSource(second_source, [])
+    service = NewsPushService(
+        repository=repo,
+        source_adapters=[first_adapter, second_adapter],
+        ai_service=make_ai_service(),
+    )
+
+    first_bundle = service.run_once(first_run_at)
+    first_adapter.items = []
+    second_adapter.items = [duplicate_update]
+    retry_bundle = service.run_once(retry_at)
+
+    assert [news.id for news in first_bundle.latest] == [original.id]
+    assert retry_bundle.latest == []
+    assert [news.id for news in repo.list_news_for_day(first_run_at.date())] == [original.id]
+
+
+def test_push_service_keeps_distinct_query_identity_articles(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Example Tech", url="mock://example", source_type="mock")
+    repo.upsert_source(source)
+    first = make_news("First company filing", "https://example.com/article?id=1", now, source)
+    second = make_news("Second company filing", "https://example.com/article?id=2", now, source)
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[FakeSource(source, [first, second])],
+        ai_service=make_ai_service(),
+    ).run_once(now)
+
+    assert [news.id for news in bundle.latest] == [first.id, second.id]
+
+
 def test_push_failure_does_not_advance_last_push_at(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     previous = datetime(2026, 6, 4, 8, 0, tzinfo=timezone.utc)

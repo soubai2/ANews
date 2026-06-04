@@ -95,8 +95,8 @@ class URLSourceAdapter:
         except Exception as error:
             raise RuntimeError(f"Source {self.source.name} fetch failed: {error}") from error
 
-        items = self._parse_feed(raw_text, start, end)
-        if items:
+        is_feed, items = self._parse_feed(raw_text, start, end)
+        if is_feed:
             return items
 
         fallback = self._parse_html_page(raw_text, end)
@@ -112,14 +112,20 @@ class URLSourceAdapter:
         response.raise_for_status()
         return response.text
 
-    def _parse_feed(self, raw_text: str, start: datetime, end: datetime) -> list[NewsItem]:
+    def _parse_feed(
+        self, raw_text: str, start: datetime, end: datetime
+    ) -> tuple[bool, list[NewsItem]]:
         try:
             root = ElementTree.fromstring(raw_text)
         except ElementTree.ParseError:
-            return []
+            return False, []
+
+        entries = _feed_entries(root)
+        if not entries:
+            return False, []
 
         parsed_items: list[NewsItem] = []
-        for element in _feed_entries(root):
+        for element in entries:
             title = _first_text(element, "title")
             url = _first_text(element, "link")
             if not url:
@@ -154,7 +160,7 @@ class URLSourceAdapter:
                     category=self.source.source_type,
                 )
             )
-        return parsed_items
+        return True, parsed_items
 
     def _parse_html_page(self, raw_text: str, fetched_at: datetime) -> NewsItem:
         title = _html_title(raw_text) or self.source.name

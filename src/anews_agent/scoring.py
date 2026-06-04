@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta
+from typing import Any
 
-from anews_agent.models import NewsItem, UserPreference
+from anews_agent.domain import NewsItem, UserPreference, normalize_terms
+
+
+IMPORTANT_CATEGORIES = {"policy", "company", "technology", "finance", "safety"}
 
 
 def compute_fetch_window(
@@ -31,23 +35,50 @@ class ImportanceScorer:
 
     def score(self, news: NewsItem) -> NewsItem:
         score = 1.0
+        source_name = _source_name(news)
+        category = getattr(news, "category", "general")
+        tags = list(getattr(news, "tags", []) or [])
+        entities = list(getattr(news, "entities", []) or [])
+        reasons = list(getattr(news, "recommendation_reasons", []) or [])
         haystack = " ".join(
-            [news.title, news.summary, news.source, news.category, *news.tags, *news.entities]
+            [
+                getattr(news, "title", ""),
+                getattr(news, "summary", ""),
+                source_name,
+                category,
+                *tags,
+                *entities,
+            ]
         ).lower()
 
         for preference in self.preferences:
-            if preference.value.lower() in haystack:
+            value = preference.value.strip()
+            if value and value.lower() in haystack:
                 score += 2.0 * preference.weight
+                reasons.append(f"命中偏好: {value}")
 
-        if news.source in self.user_source_names:
+        if source_name in self.user_source_names:
             score += 2.0
+            reasons.append("来自你指定的来源")
 
-        score += min(self.mainstream_mentions.get(news.id, 0), 5) * 0.75
+        mainstream_count = self.mainstream_mentions.get(news.id, 0)
+        if mainstream_count > 0:
+            score += min(mainstream_count, 5) * 0.75
+            reasons.append("主流媒体高关注")
 
-        if news.category in {"policy", "company", "technology", "finance", "safety"}:
+        if category in IMPORTANT_CATEGORIES:
             score += 0.75
+            reasons.append(f"重要分类: {category}")
 
-        if news.is_follow_update:
+        if getattr(news, "is_follow_update", False):
             score += 2.5
+            reasons.append("你正在跟进的事件有更新")
 
+        normalized_reasons = normalize_terms(reasons)
+        if hasattr(news, "with_score"):
+            return news.with_score(score, normalized_reasons)
         return replace(news, importance_score=round(score, 3))
+
+
+def _source_name(news: Any) -> str:
+    return getattr(news, "source_name", getattr(news, "source", ""))

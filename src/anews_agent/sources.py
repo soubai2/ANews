@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from anews_agent.domain import NewsItem, Source
+
+
+DEFAULT_SAMPLE_ANCHOR = datetime(2026, 6, 4, 9, 30, tzinfo=timezone.utc)
 
 
 class NewsSourceAdapter(Protocol):
@@ -17,9 +20,10 @@ class NewsSourceAdapter(Protocol):
 @dataclass(frozen=True)
 class DeterministicNewsSource:
     source: Source
+    anchor: datetime | None = None
 
     def fetch(self, start: datetime, end: datetime) -> list[NewsItem]:
-        anchor = end - timedelta(minutes=30)
+        anchor = self.anchor or DEFAULT_SAMPLE_ANCHOR
         samples = [
             (
                 "DeepSeek model update expands agent workflows",

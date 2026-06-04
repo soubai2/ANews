@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from anews_agent.domain import NewsItem, Source, UserPreference
 from anews_agent.scoring import ImportanceScorer, compute_fetch_window
 from anews_agent.sources import DeterministicNewsSource, URLSourceAdapter
@@ -35,14 +37,31 @@ def test_deterministic_source_returns_items_inside_window():
     assert all(item.source_id == source.id for item in items)
 
 
+def test_deterministic_source_keeps_sample_identity_across_overlapping_windows():
+    source = Source.from_url(name="Mock Tech", url="mock://tech", source_type="mock")
+    adapter = DeterministicNewsSource(source=source)
+
+    first = adapter.fetch(
+        datetime(2026, 6, 4, 8, 30, tzinfo=timezone.utc),
+        datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc),
+    )
+    second = adapter.fetch(
+        datetime(2026, 6, 4, 8, 45, tzinfo=timezone.utc),
+        datetime(2026, 6, 4, 10, 15, tzinfo=timezone.utc),
+    )
+
+    assert [item.id for item in first] == [item.id for item in second]
+    assert [item.published_at for item in first] == [item.published_at for item in second]
+
+
 def test_url_source_adapter_records_clear_failure():
     source = Source.from_url(name="Bad Source", url="https://bad.example", source_type="news")
     adapter = URLSourceAdapter(source=source)
 
-    try:
+    with pytest.raises(RuntimeError) as error:
         adapter.fetch(datetime.now(timezone.utc), datetime.now(timezone.utc))
-    except RuntimeError as error:
-        assert "real crawling is not enabled" in str(error)
+
+    assert "real crawling is not enabled" in str(error.value)
 
 
 def test_importance_scorer_adds_scores_and_reasons():
@@ -68,6 +87,53 @@ def test_importance_scorer_adds_scores_and_reasons():
 
     assert scored.importance_score > 5.0
     assert "命中偏好: AI" in scored.recommendation_reasons
+    assert "来自你指定的来源" in scored.recommendation_reasons
+
+
+def test_importance_scorer_does_not_match_short_preference_inside_unrelated_words():
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    news = NewsItem.from_raw(
+        title="Retail chairman said outlook improved",
+        url="https://example.com/retail",
+        source_name="Example News",
+        published_at=now,
+        fetched_at=now,
+        summary="Retail demand improved after the chairman said inventory normalized.",
+        tags=[],
+        entities=[],
+        category="general",
+    )
+    scorer = ImportanceScorer(
+        preferences=[UserPreference.from_value(kind="topic", value="AI", weight=1.0)]
+    )
+
+    scored = scorer.score(news)
+
+    assert scored.importance_score == 1.0
+    assert "命中偏好: AI" not in scored.recommendation_reasons
+
+
+def test_importance_scorer_matches_user_sources_case_and_whitespace_insensitively():
+    now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+    news = NewsItem.from_raw(
+        title="Product update",
+        url="https://example.com/product",
+        source_name=" Company   Blog ",
+        published_at=now,
+        fetched_at=now,
+        summary="A product update.",
+        tags=[],
+        entities=[],
+        category="general",
+    )
+    scorer = ImportanceScorer(
+        preferences=[],
+        user_source_names={"company blog"},
+    )
+
+    scored = scorer.score(news)
+
+    assert scored.importance_score == 3.0
     assert "来自你指定的来源" in scored.recommendation_reasons
 
 

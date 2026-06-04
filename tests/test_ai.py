@@ -73,10 +73,30 @@ def test_deepseek_provider_uses_chat_completions_shape_and_parses_json():
     assert client.requests[0]["headers"]["Authorization"] == "Bearer secret"
     assert client.requests[0]["json"]["model"] == "deepseek-v4-flash"
     assert client.requests[0]["json"]["stream"] is False
+    assert client.requests[0]["json"]["response_format"] == {"type": "json_object"}
     assert result.summary == "模型摘要"
     assert result.tags == ["AI", "chips"]
     assert result.entities == ["Example Company"]
     assert result.fallback_used is False
+
+
+def test_fallback_provider_does_not_tag_ai_from_substrings():
+    now = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    news = NewsItem.from_raw(
+        title="Retail chairman visits Thailand suppliers",
+        url="https://example.com/retail",
+        source_name="Example Business",
+        published_at=now,
+        fetched_at=now,
+        summary="The retail chairman visited Thailand stores to discuss sales.",
+        tags=[],
+        entities=[],
+        category="business",
+    )
+
+    result = FallbackAIProvider().enrich(news)
+
+    assert "AI" not in result.tags
 
 
 def test_ai_service_falls_back_without_key():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -29,6 +30,12 @@ class AIProvider(Protocol):
     def enrich(self, news: NewsItem) -> AIEnrichment: ...
 
 
+_AI_TOKEN_RE = re.compile(r"(?<![a-z0-9])ai(?![a-z0-9])")
+_AI_PHRASE_RE = re.compile(r"\bartificial intelligence\b")
+_CHIP_TOKEN_RE = re.compile(r"(?<![a-z0-9])chips?(?![a-z0-9])")
+_SEMICONDUCTOR_TOKEN_RE = re.compile(r"(?<![a-z0-9])semiconductors?(?![a-z0-9])")
+
+
 class _HTTPXClient:
     def post(
         self,
@@ -42,13 +49,23 @@ class _HTTPXClient:
 
 class FallbackAIProvider:
     def enrich(self, news: NewsItem) -> AIEnrichment:
-        text = f"{news.title} {news.summary} {news.category}".lower()
+        text = f"{news.title} {news.summary} {news.category}"
+        text_lower = text.lower()
         tags = list(news.tags)
         entities = list(news.entities)
 
-        if "ai" in text or "artificial intelligence" in text:
+        if (
+            _AI_TOKEN_RE.search(text_lower)
+            or _AI_PHRASE_RE.search(text_lower)
+            or "人工智能" in text
+            or "模型" in text
+        ):
             tags.append("AI")
-        if "chip" in text or "semiconductor" in text:
+        if (
+            _CHIP_TOKEN_RE.search(text_lower)
+            or _SEMICONDUCTOR_TOKEN_RE.search(text_lower)
+            or "芯片" in text
+        ):
             tags.append("chip")
         if news.category:
             tags.append(news.category)
@@ -95,6 +112,7 @@ class DeepSeekProvider:
             json={
                 "model": self.settings.model,
                 "stream": False,
+                "response_format": {"type": "json_object"},
                 "messages": [
                     {
                         "role": "system",

@@ -133,6 +133,41 @@ def test_source_health_state_survives_later_source_upsert_without_health_fields(
     assert stored.failure_reason == "Connection failed"
 
 
+def test_list_sources_can_filter_to_enabled_sources(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    enabled_source = Source.from_url(
+        name="Enabled Source",
+        url="https://enabled.example",
+        source_type="news",
+        enabled=True,
+    )
+    disabled_source = Source.from_url(
+        name="Disabled Source",
+        url="https://disabled.example",
+        source_type="rss",
+        enabled=False,
+    )
+
+    repo.upsert_source(disabled_source)
+    repo.upsert_source(enabled_source)
+
+    enabled_sources = repo.list_sources(enabled_only=True)
+
+    assert [source.id for source in enabled_sources] == [enabled_source.id]
+
+
+def test_cancelled_follows_are_hidden_from_list_follows(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    news = make_news("AI chip supply update", "https://example.com/a", now)
+
+    repo.upsert_news(news)
+    follow = repo.follow_news(news.id, now)
+    repo.cancel_follow(follow.id, now + timedelta(minutes=5))
+
+    assert repo.list_follows() == []
+
+
 def test_repeated_preference_upsert_accumulates_weight(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     created_at = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)

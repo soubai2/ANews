@@ -273,9 +273,14 @@ class NewsRepository:
                 ),
             )
 
-    def list_sources(self) -> list[Source]:
+    def list_sources(self, enabled_only: bool = False) -> list[Source]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM sources ORDER BY name, url").fetchall()
+            query = "SELECT * FROM sources"
+            params: tuple[int, ...] = ()
+            if enabled_only:
+                query += " WHERE enabled = ?"
+                params = (1,)
+            rows = conn.execute(f"{query} ORDER BY name, url", params).fetchall()
         return [self._row_to_source(row) for row in rows]
 
     def get_source(self, source_id: str) -> Source | None:
@@ -388,7 +393,11 @@ class NewsRepository:
     def list_follows(self) -> list[FollowedStory]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM followed_stories ORDER BY created_at DESC, title"
+                """
+                SELECT * FROM followed_stories
+                WHERE status = 'active'
+                ORDER BY created_at DESC, title
+                """
             ).fetchall()
         return [self._row_to_follow(row) for row in rows]
 

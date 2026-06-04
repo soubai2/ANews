@@ -19,6 +19,24 @@ from anews_agent.scoring import ImportanceScorer, compute_fetch_window
 from anews_agent.storage import NewsRepository
 
 
+GENERIC_FOLLOW_TERMS = {
+    "ai",
+    "artificial intelligence",
+    "business",
+    "company",
+    "finance",
+    "general",
+    "market",
+    "markets",
+    "news",
+    "policy",
+    "product",
+    "technology",
+    "update",
+    "updates",
+}
+
+
 class SourceAdapter(Protocol):
     source: Source
 
@@ -29,36 +47,62 @@ class PreferenceService:
     def __init__(self, repository: NewsRepository):
         self.repository = repository
 
-    def focus_news(self, news_id: str, now: datetime) -> None:
+    def focus_news(self, news_id: str, now: datetime) -> list[UserPreference]:
         news = self.repository.get_news(news_id)
         if news is None:
             raise KeyError(f"Unknown news item: {news_id}")
 
         created_from = f"news:{news.id}"
-        self._upsert("category", news.category, now, created_from)
-        self._upsert("source", news.source_name, now, created_from)
+        preferences: list[UserPreference] = []
+        self._append_preference(preferences, "category", news.category, now, created_from)
+        self._append_preference(preferences, "source", news.source_name, now, created_from)
         for tag in news.tags:
-            self._upsert("tag", tag, now, created_from)
+            self._append_preference(preferences, "tag", tag, now, created_from)
         for entity in news.entities:
-            self._upsert("entity", entity, now, created_from)
+            self._append_preference(preferences, "entity", entity, now, created_from)
+        return preferences
 
-    def focus_terms(self, terms: list[str], now: datetime, created_from: str) -> None:
+    def focus_terms(
+        self, terms: list[str], now: datetime, created_from: str
+    ) -> list[UserPreference]:
+        preferences: list[UserPreference] = []
         for term in normalize_terms(terms):
-            self._upsert("topic", term, now, created_from)
+            self._append_preference(preferences, "topic", term, now, created_from)
+        return preferences
 
-    def _upsert(self, kind: str, value: str, now: datetime, created_from: str) -> None:
+    def _append_preference(
+        self,
+        preferences: list[UserPreference],
+        kind: str,
+        value: str,
+        now: datetime,
+        created_from: str,
+    ) -> None:
+        preference = self._upsert(kind, value, now, created_from)
+        if preference is not None:
+            preferences.append(preference)
+
+    def _upsert(
+        self, kind: str, value: str, now: datetime, created_from: str
+    ) -> UserPreference | None:
         clean_value = value.strip()
         if not clean_value:
-            return
-        self.repository.upsert_preference(
-            UserPreference.from_value(
-                kind=kind,
-                value=clean_value,
-                created_from=created_from,
-                created_at=now,
-                updated_at=now,
-            )
+            return None
+        preference = UserPreference.from_value(
+            kind=kind,
+            value=clean_value,
+            created_from=created_from,
+            created_at=now,
+            updated_at=now,
         )
+        self.repository.upsert_preference(preference)
+        return self._stored_preference(preference) or preference
+
+    def _stored_preference(self, preference: UserPreference) -> UserPreference | None:
+        for stored in self.repository.list_preferences():
+            if stored.id == preference.id:
+                return stored
+        return None
 
 
 class SourceService:
@@ -136,19 +180,22 @@ class NewsPushService:
             self.repository.mark_source_success(source.id, now)
 
         scored_items = self._enrich_score_and_mark(fetched)
-        latest = self._sort_latest(scored_items)
         relevant = self._sort_relevant(scored_items)
         follow_updates = [item for item in relevant if item.is_follow_update]
+        latest_items: list[NewsItem] = []
 
         for item in scored_items:
-            self.repository.upsert_news(replace(item, pushed=True))
+            stored_item = replace(item, pushed=True)
+            inserted = self.repository.upsert_news(stored_item)
+            if inserted:
+                latest_items.append(stored_item)
 
         if not source_failed:
             self.repository.set_last_push_at(now)
 
         resolved_last_push_at = self.repository.get_last_push_at()
         return PushBundle(
-            latest=latest,
+            latest=self._sort_latest(latest_items),
             relevant=relevant,
             follow_updates=self._sort_latest(follow_updates),
             last_push_at=resolved_last_push_at,
@@ -252,10 +299,17 @@ def _deduplicate_by_id(news_items: list[NewsItem]) -> list[NewsItem]:
 
 def _matches_follow(news: NewsItem, follow: FollowedStory) -> bool:
     entity_terms = normalize_terms(list(follow.entities))
-    keyword_terms = normalize_terms(list(follow.keywords))
     if entity_terms and any(_term_matches_news(term, news) for term in entity_terms):
         return True
-    return any(_term_matches_news(term, news) for term in keyword_terms)
+
+    keyword_terms = [
+        term for term in normalize_terms(list(follow.keywords)) if _is_meaningful_follow_term(term)
+    ]
+    title_terms = _title_specific_terms(follow.title)
+    matched_title_terms = [term for term in title_terms if _term_matches_news(term, news)]
+    matched_keyword_terms = [term for term in keyword_terms if _term_matches_news(term, news)]
+    matched_terms = set(matched_title_terms + matched_keyword_terms)
+    return bool(matched_title_terms) and len(matched_terms) >= 2
 
 
 def _term_matches_news(term: str, news: NewsItem) -> bool:
@@ -281,3 +335,21 @@ def _term_matches_news(term: str, news: NewsItem) -> bool:
 
 def _normalize_match_text(value: object) -> str:
     return " ".join(str(value).strip().casefold().split())
+
+
+def _is_meaningful_follow_term(term: str) -> bool:
+    normalized = _normalize_match_text(term)
+    return len(normalized) >= 3 and normalized not in GENERIC_FOLLOW_TERMS
+
+
+def _title_specific_terms(title: str) -> list[str]:
+    words = re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", title.casefold())
+    terms: list[str] = []
+    for index, word in enumerate(words):
+        if _is_meaningful_follow_term(word):
+            terms.append(word)
+        if index + 1 < len(words):
+            phrase = f"{word} {words[index + 1]}"
+            if any(_is_meaningful_follow_term(part) for part in phrase.split()):
+                terms.append(phrase)
+    return normalize_terms(terms)

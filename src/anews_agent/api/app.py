@@ -1,26 +1,58 @@
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from anews_agent.ai import NewsAIService
 from anews_agent.config import AppConfig
-from anews_agent.domain import AISettings, Source
+from anews_agent.domain import AISettings, Source, SourceType
 from anews_agent.services import FollowService, NewsPushService, PreferenceService, SourceService
 from anews_agent.sources import DeterministicNewsSource, URLSourceAdapter
 from anews_agent.storage import NewsRepository
 
 
+LOCAL_CORS_ORIGIN_REGEX = (
+    r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|file://.*|electron://.*|app://.*|null)$"
+)
+
+
+class SourceCreateRequest(BaseModel):
+    name: str
+    url: str
+    source_type: SourceType = "news"
+    user_specified: bool = True
+
+
+class SourcePatchRequest(BaseModel):
+    enabled: bool
+
+
+class AISettingsPatchRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    enabled: bool | None = None
+    fallback_enabled: bool | None = None
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
     resolved_config = config or AppConfig.from_env()
     repository = NewsRepository(resolved_config.db_path)
-    _persist_default_ai_settings(repository, resolved_config)
+    _sync_ai_settings_with_config(repository, resolved_config)
 
     app = FastAPI(title="ANews Agent API")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=LOCAL_CORS_ORIGIN_REGEX,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.config = resolved_config
     app.state.repository = repository
 
@@ -30,8 +62,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/api/push")
     def current_push() -> Any:
-        service = build_push_service(repository, resolved_config, now=_utc_now())
-        return serialize(service.current_bundle(_utc_now()))
+        now = _utc_now()
+        service = build_push_service(repository, resolved_config, now=now)
+        return serialize(service.current_bundle(now))
 
     @app.post("/api/push/run")
     def run_push() -> Any:
@@ -80,21 +113,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return serialize(repository.list_sources())
 
     @app.post("/api/sources")
-    def add_source(payload: dict[str, Any] = Body(...)) -> Any:
+    def add_source(payload: SourceCreateRequest) -> Any:
         source = SourceService(repository).add_source(
-            name=str(payload["name"]),
-            url=str(payload["url"]),
-            source_type=payload.get("source_type", "news"),
-            user_specified=bool(payload.get("user_specified", True)),
+            name=payload.name,
+            url=payload.url,
+            source_type=payload.source_type,
+            user_specified=payload.user_specified,
         )
         return serialize(source)
 
     @app.patch("/api/sources/{source_id}")
-    def set_source_enabled(source_id: str, payload: dict[str, Any] = Body(...)) -> Any:
+    def set_source_enabled(source_id: str, payload: SourcePatchRequest) -> Any:
         try:
-            source = SourceService(repository).set_enabled(
-                source_id, bool(payload["enabled"])
-            )
+            source = SourceService(repository).set_enabled(source_id, payload.enabled)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return serialize(source)
@@ -113,19 +144,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return serialize(repository.get_ai_settings())
 
     @app.patch("/api/ai/settings")
-    def update_ai_settings(payload: dict[str, Any] = Body(...)) -> Any:
+    def update_ai_settings(payload: AISettingsPatchRequest) -> Any:
         current = repository.get_ai_settings()
         updated = AISettings(
-            provider=_string_setting(payload, "provider", current.provider),
-            model=_string_setting(payload, "model", current.model),
-            base_url=_string_setting(payload, "base_url", current.base_url),
-            enabled=bool(payload.get("enabled", current.enabled)),
-            fallback_enabled=bool(
-                payload.get("fallback_enabled", current.fallback_enabled)
-            ),
-            api_key_configured=bool(
-                payload.get("api_key_configured", current.api_key_configured)
-            ),
+            provider=_string_setting(payload.provider, current.provider),
+            model=_string_setting(payload.model, current.model),
+            base_url=_string_setting(payload.base_url, current.base_url),
+            enabled=current.enabled if payload.enabled is None else payload.enabled,
+            fallback_enabled=current.fallback_enabled
+            if payload.fallback_enabled is None
+            else payload.fallback_enabled,
+            api_key_configured=bool(resolved_config.deepseek_api_key),
         )
         repository.set_ai_settings(updated)
         return serialize(repository.get_ai_settings())
@@ -145,8 +174,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 def build_push_service(
     repository: NewsRepository, config: AppConfig, *, now: datetime
 ) -> NewsPushService:
-    sources = repository.list_sources(enabled_only=True)
-    if not sources:
+    all_sources = repository.list_sources()
+    if not all_sources:
         default_source = Source.from_url(
             name="ANews Mock",
             url="mock://anews",
@@ -154,7 +183,8 @@ def build_push_service(
             user_specified=False,
         )
         repository.upsert_source(default_source)
-        sources = [default_source]
+        all_sources = [default_source]
+    sources = [source for source in all_sources if source.enabled]
 
     adapters = [
         DeterministicNewsSource(source=source, anchor=now)
@@ -188,22 +218,25 @@ def serialize(obj: Any) -> Any:
     return obj
 
 
-def _persist_default_ai_settings(repository: NewsRepository, config: AppConfig) -> None:
+def _sync_ai_settings_with_config(repository: NewsRepository, config: AppConfig) -> None:
     current = repository.get_ai_settings()
-    if current != AISettings.default():
-        return
-    repository.set_ai_settings(
-        AISettings(
+    api_key_configured = bool(config.deepseek_api_key)
+    if current == AISettings.default():
+        updated = AISettings(
             provider="deepseek",
             model=config.deepseek_model,
             base_url=config.deepseek_base_url,
-            api_key_configured=bool(config.deepseek_api_key),
+            enabled=current.enabled,
+            fallback_enabled=current.fallback_enabled,
+            api_key_configured=api_key_configured,
         )
-    )
+    else:
+        updated = replace(current, api_key_configured=api_key_configured)
+    if updated != current:
+        repository.set_ai_settings(updated)
 
 
-def _string_setting(payload: dict[str, Any], key: str, default: str) -> str:
-    value = payload.get(key, default)
+def _string_setting(value: str | None, default: str) -> str:
     if value is None:
         return default
     return str(value).strip() or default

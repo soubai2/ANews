@@ -21,30 +21,87 @@ class AppConfig:
     agent_max_read_urls: int = 20
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
-        db_path = Path(os.environ.get("ANEWS_DB_PATH", "anews.db"))
-        api_key = os.environ.get("DEEPSEEK_API_KEY")
-        search_api_key = os.environ.get("ANEWS_SEARCH_API_KEY") or os.environ.get("TAVILY_API_KEY")
+    def from_env(cls, env_file: str | Path | None = None) -> "AppConfig":
+        file_values = load_env_file(Path(env_file) if env_file is not None else Path(".anews.env"))
+        db_path = Path(_setting(file_values, "ANEWS_DB_PATH", default="anews.db"))
+        api_key = _setting(file_values, "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
+        search_api_key = _setting(file_values, "ANEWS_SEARCH_API_KEY", "TAVILY_API_KEY")
         return cls(
             db_path=db_path,
             deepseek_api_key=api_key if api_key else None,
-            deepseek_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            deepseek_model=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-            push_interval_hours=_int_env("ANEWS_PUSH_INTERVAL_HOURS", 2),
-            search_provider=os.environ.get("ANEWS_SEARCH_PROVIDER", "tavily").strip() or "tavily",
-            search_api_key=search_api_key if search_api_key else None,
-            search_base_url=os.environ.get(
-                "ANEWS_SEARCH_BASE_URL", "https://api.tavily.com/search"
+            deepseek_base_url=_setting(
+                file_values,
+                "DEEPSEEK_BASE_URL",
+                "OPENAI_BASE_URL",
+                default="https://api.deepseek.com",
             ),
-            search_timeout_seconds=_float_env("ANEWS_SEARCH_TIMEOUT_SECONDS", 15.0),
-            agent_max_tool_calls=_int_env("ANEWS_AGENT_MAX_TOOL_CALLS", 16),
-            agent_max_search_queries=_int_env("ANEWS_AGENT_MAX_SEARCH_QUERIES", 8),
-            agent_max_read_urls=_int_env("ANEWS_AGENT_MAX_READ_URLS", 20),
+            deepseek_model=_setting(
+                file_values,
+                "DEEPSEEK_MODEL",
+                "OPENAI_MODEL",
+                default="deepseek-v4-flash",
+            ),
+            push_interval_hours=_int_setting(file_values, "ANEWS_PUSH_INTERVAL_HOURS", 2),
+            search_provider=_setting(file_values, "ANEWS_SEARCH_PROVIDER", default="tavily").strip()
+            or "tavily",
+            search_api_key=search_api_key if search_api_key else None,
+            search_base_url=_setting(
+                file_values,
+                "ANEWS_SEARCH_BASE_URL",
+                default="https://api.tavily.com/search",
+            ),
+            search_timeout_seconds=_float_setting(
+                file_values, "ANEWS_SEARCH_TIMEOUT_SECONDS", 15.0
+            ),
+            agent_max_tool_calls=_int_setting(file_values, "ANEWS_AGENT_MAX_TOOL_CALLS", 16),
+            agent_max_search_queries=_int_setting(
+                file_values, "ANEWS_AGENT_MAX_SEARCH_QUERIES", 8
+            ),
+            agent_max_read_urls=_int_setting(file_values, "ANEWS_AGENT_MAX_READ_URLS", 20),
         )
 
 
-def _int_env(name: str, default: int) -> int:
-    value = os.environ.get(name)
+def load_env_file(path: Path) -> dict[str, str]:
+    if not path.exists() or not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        values[key] = _clean_env_value(value)
+    return values
+
+
+def _clean_env_value(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+        return cleaned[1:-1]
+    return cleaned
+
+
+def _setting(file_values: dict[str, str], *names: str, default: str = "") -> str:
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    for name in names:
+        value = file_values.get(name)
+        if value:
+            return value
+    return default
+
+
+def _int_setting(file_values: dict[str, str], name: str, default: int) -> int:
+    value = _setting(file_values, name)
     if not value:
         return default
     try:
@@ -54,8 +111,8 @@ def _int_env(name: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _float_env(name: str, default: float) -> float:
-    value = os.environ.get(name)
+def _float_setting(file_values: dict[str, str], name: str, default: float) -> float:
+    value = _setting(file_values, name)
     if not value:
         return default
     try:

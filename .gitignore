@@ -13,3 +13,4 @@ dist/
 .anews.env
 docs/
 .tmp_electron_screen.png
+desktop/tests/ui-contracts.test.mjs

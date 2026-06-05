@@ -549,6 +549,58 @@ class RetrievedDocument:
 
 
 @dataclass(frozen=True)
+class ArticleSnapshot:
+    id: str
+    news_id: str
+    source_url: str
+    title: str
+    source_name: str
+    markdown: str
+    created_at: datetime
+    status: str = "translated"
+    layout_style: str = "article"
+    html: str = ""
+    generated_by: str = "deepseek"
+    updated_at: datetime | None = None
+    error_message: str | None = None
+
+    @classmethod
+    def from_news(
+        cls,
+        *,
+        news_id: str,
+        source_url: str,
+        title: str,
+        source_name: str,
+        markdown: str,
+        created_at: datetime,
+        status: str = "translated",
+        layout_style: str = "article",
+        html: str = "",
+        generated_by: str = "deepseek",
+        updated_at: datetime | None = None,
+        error_message: str | None = None,
+    ) -> "ArticleSnapshot":
+        clean_news_id = news_id.strip()
+        clean_source_url = source_url.strip()
+        return cls(
+            id=stable_id("snap", clean_news_id, clean_source_url),
+            news_id=clean_news_id,
+            source_url=clean_source_url,
+            title=title.strip(),
+            source_name=source_name.strip(),
+            markdown=markdown.strip(),
+            created_at=created_at,
+            status=status.strip() or "translated",
+            layout_style=layout_style.strip() or "article",
+            html=html.strip(),
+            generated_by=generated_by.strip() or "deepseek",
+            updated_at=updated_at,
+            error_message=error_message.strip() if error_message else None,
+        )
+
+
+@dataclass(frozen=True)
 class CandidateNews:
     id: str
     run_id: str

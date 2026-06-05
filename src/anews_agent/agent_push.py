@@ -143,7 +143,12 @@ class ModelSearchPushService:
                     "4 unique URLs, never read the same URL twice, and prefer search result "
                     "snippets when they contain enough evidence. After gathering enough evidence, "
                     "call write_candidate_news when you have candidates, call select_push_items "
-                    "before final answer, then stop using tools."
+                    "before final answer, then stop using tools. For every item passed to "
+                    "select_push_items, include translated_title, translated_summary, "
+                    "article_markdown, and layout_style so the app can show a local Chinese "
+                    "article snapshot instead of embedding the source website. Preserve the "
+                    "article reading structure with headings, paragraphs, bullet lists, quotes, "
+                    "and source notes; do not include scripts or external page chrome."
                 ),
             },
             {

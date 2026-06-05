@@ -293,7 +293,6 @@ export function App() {
   const [searchStatus, setSearchStatus] = useState(null);
   const [lastAgentRun, setLastAgentRun] = useState(null);
   const [selectedNews, setSelectedNews] = useState(null);
-  const [readerUrl, setReaderUrl] = useState("");
   const [sourceForm, setSourceForm] = useState({
     name: "",
     url: "",
@@ -382,7 +381,6 @@ export function App() {
     if (!item?.id) return;
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
-    setReaderUrl("");
     setStatus("正在打开详情");
     try {
       const news = await api.getNews(item.id);
@@ -399,14 +397,6 @@ export function App() {
   function closeDetail() {
     detailRequestRef.current += 1;
     setSelectedNews(null);
-    setReaderUrl("");
-  }
-
-  function openOriginalInApp(event) {
-    event.preventDefault();
-    if (!selectedNews?.url) return;
-    setReaderUrl(selectedNews.url);
-    setStatus("正在应用内打开原文");
   }
 
   async function addSource(event) {
@@ -934,17 +924,14 @@ export function App() {
             type="button"
             onClick={closeDetail}
           />
-          <aside
-            className={readerUrl ? "drawer drawer--reader" : "drawer"}
-            aria-label="新闻详情"
-          >
+          <aside className="drawer drawer--article" aria-label="新闻详情">
             <button className="drawer__close" type="button" onClick={closeDetail}>
               关闭
             </button>
             <p className="drawer__meta">
               {selectedNews.source_name || "未知来源"} / {formatTime(selectedNews.published_at)}
             </p>
-            <h2>{selectedNews.title}</h2>
+            <h2>{selectedNews.article_snapshot?.title || selectedNews.title}</h2>
             <p>{selectedNews.summary || "暂无摘要。"}</p>
             <div className="tag-row">
               {asArray(selectedNews.tags).map((tag) => (
@@ -958,31 +945,31 @@ export function App() {
                 <span key={reason}>{reason}</span>
               ))}
             </div>
+            <div className="article-reader">
+              <div className="article-reader__bar">
+                <span>
+                  {selectedNews.article_snapshot?.status === "translated"
+                    ? "本地中文快照"
+                    : "摘要快照"}
+                </span>
+                <span>{selectedNews.article_snapshot?.layout_style || "article"}</span>
+              </div>
+              <div className="markdown-body article-reader__body">
+                {selectedNews.article_snapshot?.markdown
+                  ? renderMarkdownMessage(selectedNews.article_snapshot.markdown)
+                  : renderMarkdownMessage(
+                      `## ${selectedNews.title || "新闻详情"}\n\n${
+                        selectedNews.summary || "这条新闻暂未生成本地文章快照。"
+                      }\n\n### 原始来源\n- ${selectedNews.source_name || "未知来源"}: ${
+                        selectedNews.url || "无"
+                      }`,
+                    )}
+              </div>
+            </div>
             {selectedNews.url && (
-              <a className="drawer-link" href={selectedNews.url} onClick={openOriginalInApp}>
-                <ExternalLink size={16} />
-                <span>在应用内打开原文</span>
-              </a>
-            )}
-            {readerUrl && (
-              <div className="reader-panel">
-                <div className="reader-panel__bar">
-                  <span>{readerUrl}</span>
-                  <button type="button" onClick={() => setReaderUrl("")}>
-                    收起
-                  </button>
-                  <button type="button" onClick={() => setReaderUrl(selectedNews.url)}>
-                    重试
-                  </button>
-                </div>
-                <iframe
-                  className="reader-frame"
-                  src={readerUrl}
-                  title={selectedNews.title || "新闻原文"}
-                  sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
-                  referrerPolicy="no-referrer-when-downgrade"
-                  onError={() => setStatus("原文无法在应用内显示，可重试")}
-                />
+              <div className="source-evidence">
+                <span>原始来源</span>
+                <strong>{selectedNews.url}</strong>
               </div>
             )}
           </aside>

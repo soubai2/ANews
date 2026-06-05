@@ -4,6 +4,7 @@ import pytest
 
 from anews_agent.domain import (
     AISettings,
+    ArticleSnapshot,
     NewsItem,
     PushBundle,
     Source,
@@ -109,3 +110,23 @@ def test_domain_list_fields_reject_in_place_mutation():
 
     with pytest.raises(TypeError):
         bundle.latest.clear()
+
+
+def test_article_snapshot_generates_stable_id_for_news_and_source_url():
+    created_at = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+
+    snapshot = ArticleSnapshot.from_news(
+        news_id="news_1",
+        source_url="https://example.com/article",
+        title="AI chip update",
+        source_name="Example Tech",
+        markdown="## AI chip update\n\nA company shipped a new chip.",
+        created_at=created_at,
+        status="translated",
+        layout_style="article",
+    )
+
+    assert snapshot.id.startswith("snap_")
+    assert snapshot.news_id == "news_1"
+    assert snapshot.markdown.startswith("## AI chip update")
+    assert snapshot.status == "translated"

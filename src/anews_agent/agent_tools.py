@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from anews_agent.domain import CandidateNews, NewsItem, PushSelection
+from anews_agent.domain import ArticleSnapshot, CandidateNews, NewsItem, PushSelection
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import SearchRequest, SearchService
 from anews_agent.storage import NewsRepository
@@ -151,7 +151,7 @@ def build_default_tool_registry(
             parameters=_object_schema(
                 {
                     "run_id": {"type": "string"},
-                    "items": {"type": "array", "items": {"type": "object"}},
+                    "items": {"type": "array", "items": _push_selection_item_schema()},
                 },
                 required=["run_id", "items"],
             ),
@@ -288,6 +288,64 @@ def _preference_update_item_schema() -> dict[str, Any]:
     }
 
 
+def _push_selection_item_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "section": {"type": "string"},
+            "candidate_id": {"type": "string"},
+            "id": {"type": "string"},
+            "news_id": {"type": "string"},
+            "rank": {"type": "integer"},
+            "reason": {"type": "string"},
+            "recommendation_reason": {"type": "string"},
+            "recommendation": {"type": "string"},
+            "title": {"type": "string"},
+            "url": {"type": "string"},
+            "source": {"type": "string"},
+            "source_name": {"type": "string"},
+            "summary": {"type": "string"},
+            "evidence_urls": {"type": "array", "items": {"type": "string"}},
+            "published_at": {"type": "string"},
+            "published": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "entities": {"type": "array", "items": {"type": "string"}},
+            "category": {"type": "string"},
+            "score": {"type": "number"},
+            "relevance_score": {"type": "number"},
+            "importance_score": {"type": "number"},
+            "translated_title": {
+                "type": "string",
+                "description": "Chinese title for the in-app article snapshot.",
+            },
+            "translated_summary": {
+                "type": "string",
+                "description": "Chinese summary for cards and the in-app article snapshot.",
+            },
+            "article_markdown": {
+                "type": "string",
+                "description": (
+                    "Chinese local reading snapshot in Markdown. Preserve article structure "
+                    "with headings, paragraphs, bullet lists, quotes, and source notes."
+                ),
+            },
+            "translated_markdown": {"type": "string"},
+            "markdown": {"type": "string"},
+            "article_html": {
+                "type": "string",
+                "description": "Optional safe local HTML snapshot. Do not include scripts.",
+            },
+            "layout_style": {
+                "type": "string",
+                "description": "Reading layout hint such as article, brief, timeline, or bulletin.",
+            },
+            "generated_by": {"type": "string"},
+        },
+        "required": [],
+        "additionalProperties": False,
+    }
+
+
 def _search_web(search_service: SearchService, args: dict[str, Any]) -> dict[str, Any]:
     query = _required_str(args, "query")
     response = search_service.search(
@@ -403,6 +461,7 @@ def _select_push_items(
     for index, item in enumerate(_list_arg(args, "items")):
         if not isinstance(item, dict):
             continue
+        news: NewsItem | None = None
         section = _normalize_section(str(item.get("section") or "relevant"))
         news_id = _str_arg(item, "news_id", "")
         candidate_id = _str_arg(item, "candidate_id", "") or _str_arg(item, "id", "")
@@ -418,6 +477,9 @@ def _select_push_items(
             news_id = news.id
         if not news_id:
             continue
+        news = news or repository.get_news(news_id)
+        if news is not None:
+            repository.upsert_article_snapshot(_article_snapshot_from_selection(news, item, now))
         selection = PushSelection.from_news(
             run_id=run_id,
             section=section,
@@ -451,12 +513,12 @@ def _news_from_candidate(
 ) -> NewsItem:
     reason = _selection_reason(item)
     return NewsItem.from_raw(
-        title=candidate.title,
+        title=_str_arg(item, "translated_title", "") or candidate.title,
         url=candidate.url,
         source_name=candidate.source_name or _source_from_url(candidate.url),
         published_at=candidate.published_at or _item_published_at(item) or now,
         fetched_at=now,
-        summary=candidate.summary,
+        summary=_str_arg(item, "translated_summary", "") or candidate.summary,
         tags=_string_list(item.get("tags")),
         entities=_string_list(item.get("entities")),
         category=_str_arg(item, "category", "general"),
@@ -473,14 +535,14 @@ def _news_from_selection_item(
     reason = _selection_reason(item)
     url = _required_str(item, "url")
     return NewsItem.from_raw(
-        title=_required_str(item, "title"),
+        title=_str_arg(item, "translated_title", "") or _required_str(item, "title"),
         url=url,
         source_name=_str_arg(item, "source_name", "")
         or _str_arg(item, "source", "")
         or _source_from_url(url),
         published_at=_item_published_at(item) or now,
         fetched_at=now,
-        summary=_str_arg(item, "summary", ""),
+        summary=_str_arg(item, "translated_summary", "") or _str_arg(item, "summary", ""),
         tags=_string_list(item.get("tags")),
         entities=_string_list(item.get("entities")),
         category=_str_arg(item, "category", "general"),
@@ -501,6 +563,55 @@ def _selection_reason(item: dict[str, Any]) -> str:
         or _str_arg(item, "recommendation_reason", "")
         or _str_arg(item, "recommendation", "")
     )
+
+
+def _article_snapshot_from_selection(
+    news: NewsItem, item: dict[str, Any], now: datetime
+) -> ArticleSnapshot:
+    translated_title = _str_arg(item, "translated_title", "") or news.title
+    translated_summary = _str_arg(item, "translated_summary", "") or news.summary
+    markdown = (
+        _str_arg(item, "article_markdown", "")
+        or _str_arg(item, "translated_markdown", "")
+        or _str_arg(item, "markdown", "")
+    )
+    status = "translated" if markdown else "summary"
+    if not markdown:
+        markdown = _fallback_snapshot_markdown(
+            title=translated_title,
+            summary=translated_summary,
+            source_name=news.source_name,
+            source_url=news.url,
+            reasons=list(news.recommendation_reasons),
+        )
+    return ArticleSnapshot.from_news(
+        news_id=news.id,
+        source_url=news.url,
+        title=translated_title,
+        source_name=news.source_name,
+        markdown=markdown,
+        html=_str_arg(item, "article_html", ""),
+        created_at=now,
+        status=status,
+        layout_style=_str_arg(item, "layout_style", "article"),
+        generated_by=_str_arg(item, "generated_by", "deepseek"),
+        updated_at=now,
+    )
+
+
+def _fallback_snapshot_markdown(
+    *,
+    title: str,
+    summary: str,
+    source_name: str,
+    source_url: str,
+    reasons: list[str],
+) -> str:
+    lines = [f"## {title}", "", summary or "暂无可展示的正文快照。", ""]
+    if reasons:
+        lines.extend(["### 推荐依据", *[f"- {reason}" for reason in reasons], ""])
+    lines.extend(["### 原始来源", f"- {source_name or '未知来源'}: {source_url}"])
+    return "\n".join(lines).strip()
 
 
 def _add_preference(

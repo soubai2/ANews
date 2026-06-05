@@ -11,6 +11,7 @@ from anews_agent.domain import (
     AISettings,
     AgentRun,
     AgentToolCall,
+    ArticleSnapshot,
     CandidateNews,
     ChatMessage,
     ChatSession,
@@ -247,6 +248,22 @@ class NewsRepository:
                     status TEXT NOT NULL,
                     source TEXT NOT NULL,
                     published_at TEXT,
+                    error_message TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS article_snapshots (
+                    id TEXT PRIMARY KEY,
+                    news_id TEXT NOT NULL,
+                    source_url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    source_name TEXT NOT NULL,
+                    markdown TEXT NOT NULL,
+                    html TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    layout_style TEXT NOT NULL,
+                    generated_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT,
                     error_message TEXT
                 );
 
@@ -1016,6 +1033,56 @@ class NewsRepository:
             ).fetchone()
         return self._row_to_retrieved_document(row) if row is not None else None
 
+    def upsert_article_snapshot(self, snapshot: ArticleSnapshot) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO article_snapshots (
+                    id, news_id, source_url, title, source_name, markdown, html, status,
+                    layout_style, generated_by, created_at, updated_at, error_message
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    source_name = excluded.source_name,
+                    markdown = excluded.markdown,
+                    html = excluded.html,
+                    status = excluded.status,
+                    layout_style = excluded.layout_style,
+                    generated_by = excluded.generated_by,
+                    updated_at = excluded.updated_at,
+                    error_message = excluded.error_message
+                """,
+                (
+                    snapshot.id,
+                    snapshot.news_id,
+                    snapshot.source_url,
+                    snapshot.title,
+                    snapshot.source_name,
+                    snapshot.markdown,
+                    snapshot.html,
+                    snapshot.status,
+                    snapshot.layout_style,
+                    snapshot.generated_by,
+                    to_utc_iso(snapshot.created_at),
+                    _dump_dt(snapshot.updated_at),
+                    snapshot.error_message,
+                ),
+            )
+
+    def get_article_snapshot(self, news_id: str) -> ArticleSnapshot | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM article_snapshots
+                WHERE news_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (news_id,),
+            ).fetchone()
+        return self._row_to_article_snapshot(row) if row is not None else None
+
     def upsert_candidate_news(self, candidate: CandidateNews) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -1370,6 +1437,23 @@ class NewsRepository:
             status=row["status"],
             source=row["source"],
             published_at=_load_dt(row["published_at"]),
+            error_message=row["error_message"],
+        )
+
+    def _row_to_article_snapshot(self, row: sqlite3.Row) -> ArticleSnapshot:
+        return ArticleSnapshot(
+            id=row["id"],
+            news_id=row["news_id"],
+            source_url=row["source_url"],
+            title=row["title"],
+            source_name=row["source_name"],
+            markdown=row["markdown"],
+            html=row["html"],
+            status=row["status"],
+            layout_style=row["layout_style"],
+            generated_by=row["generated_by"],
+            created_at=from_iso_datetime(row["created_at"]),
+            updated_at=_load_dt(row["updated_at"]),
             error_message=row["error_message"],
         )
 

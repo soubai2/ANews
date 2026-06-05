@@ -20,15 +20,19 @@ test("news detail requests ignore stale responses", () => {
   assert.match(app, /detailRequestRef\.current !== requestId/);
 });
 
-test("original article links stay inside the app shell", () => {
+test("news details use local article snapshots instead of embedded source iframes", () => {
   const app = readDesktopFile("src/App.jsx");
   const main = readDesktopFile("electron/main.js");
+  const styles = readDesktopFile("src/styles.css");
 
-  assert.match(app, /readerUrl/);
-  assert.match(app, /openOriginalInApp/);
-  assert.match(app, /<iframe/);
-  assert.doesNotMatch(app, /<a className="drawer-link" href=\{selectedNews\.url\}>/);
+  assert.match(app, /article_snapshot/);
+  assert.match(app, /renderMarkdownMessage\(selectedNews\.article_snapshot/);
+  assert.match(app, /article-reader/);
+  assert.doesNotMatch(app, /<iframe/);
+  assert.doesNotMatch(app, /readerUrl/);
+  assert.doesNotMatch(app, /openOriginalInApp/);
   assert.doesNotMatch(main, /shell\.openExternal/);
+  assert.match(styles, /\.article-reader/);
 });
 
 test("api request merges custom headers without dropping defaults", () => {

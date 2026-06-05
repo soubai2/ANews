@@ -437,6 +437,7 @@ def serialize_news_with_state(repository: NewsRepository, item: NewsItem) -> dic
     state = repository.get_news_user_state(item.id)
     data.update(
         {
+            "article_snapshot": serialize(repository.get_article_snapshot(item.id)),
             "is_read": state.is_read,
             "is_focused": state.is_focused,
             "is_followed": state.is_followed,

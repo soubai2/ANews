@@ -5,6 +5,7 @@ from anews_agent.domain import (
     AISettings,
     AgentRun,
     AgentToolCall,
+    ArticleSnapshot,
     CandidateNews,
     ChatMessage,
     ChatSession,
@@ -405,6 +406,31 @@ def test_repository_persists_search_documents_candidates_and_selections(tmp_path
     assert repo.get_retrieved_document(result.url).excerpt.startswith("A company shipped")
     assert repo.list_candidate_news(run.id)[0].selected is True
     assert repo.list_push_selections(run.id)[0].reason == "来自 Tavily 搜索证据"
+
+
+def test_repository_persists_article_snapshot_for_news(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    snapshot = ArticleSnapshot.from_news(
+        news_id="news_1",
+        source_url="https://example.com/ai-chip",
+        title="AI chip update",
+        source_name="Example Tech",
+        markdown="## AI chip update\n\n- A company shipped a new AI chip.",
+        created_at=now,
+        status="translated",
+        layout_style="article",
+        generated_by="deepseek",
+    )
+
+    repo.upsert_article_snapshot(snapshot)
+
+    stored = repo.get_article_snapshot("news_1")
+    assert stored is not None
+    assert stored.id == snapshot.id
+    assert stored.markdown.startswith("## AI chip update")
+    assert stored.status == "translated"
+    assert stored.generated_by == "deepseek"
 
 
 def test_repository_persists_preference_facts_and_summary_with_fts(tmp_path):

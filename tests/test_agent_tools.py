@@ -229,6 +229,54 @@ def test_candidate_relevance_score_becomes_news_importance_score(tmp_path):
     assert stored_news.importance_score == 9.0
 
 
+def test_select_push_items_persists_translated_article_snapshot(tmp_path):
+    repo, registry, now = build_registry(tmp_path)
+    run = AgentRun.start(run_type="manual_push", started_at=now)
+    repo.upsert_agent_run(run)
+    candidates = registry.execute(
+        "write_candidate_news",
+        {
+            "run_id": run.id,
+            "items": [
+                {
+                    "title": "AI chip update",
+                    "url": "https://example.com/ai-chip-snapshot",
+                    "source_name": "Example Tech",
+                    "summary": "A company shipped an AI chip.",
+                    "score": 8.5,
+                }
+            ],
+        },
+    )
+
+    registry.execute(
+        "select_push_items",
+        {
+            "run_id": run.id,
+            "items": [
+                {
+                    "section": "latest",
+                    "candidate_id": candidates["stored_candidate_ids"][0],
+                    "rank": 1,
+                    "reason": "translated article",
+                    "translated_title": "AI 芯片更新",
+                    "translated_summary": "一家公司发布了新的 AI 芯片。",
+                    "article_markdown": "## AI 芯片更新\n\n- 一家公司发布了新的 AI 芯片。",
+                    "layout_style": "article",
+                }
+            ],
+        },
+    )
+    news_id = repo.get_last_push_news_ids()[0]
+    snapshot = repo.get_article_snapshot(news_id)
+
+    assert snapshot is not None
+    assert snapshot.title == "AI 芯片更新"
+    assert snapshot.markdown.startswith("## AI 芯片更新")
+    assert snapshot.status == "translated"
+    assert snapshot.layout_style == "article"
+
+
 def test_registry_rejects_unknown_tool_and_missing_required_argument(tmp_path):
     repo, registry, now = build_registry(tmp_path)
 

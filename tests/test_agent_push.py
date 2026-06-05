@@ -126,6 +126,8 @@ def test_model_search_push_prompt_constrains_tool_budget(tmp_path):
     assert "at most 3 search" in prompt
     assert "at most 4 unique URLs" in prompt
     assert "select_push_items before final answer" in prompt
+    assert "article_markdown" in prompt
+    assert "local Chinese article snapshot" in prompt
 
 
 def test_model_search_push_validates_required_tool_sequence_and_advances_last_push(tmp_path):

@@ -149,9 +149,12 @@ class ChatService:
                     "ranking preference, call add_preference for a single preference or "
                     "update_preferences for multiple preferences. If the user asks for current "
                     "news, search the web, write candidate news, and call select_push_items so "
-                    "the result enters the news pool and push page. Never say you cannot add "
-                    "preferences when the add_preference tool is available. Use Markdown in the "
-                    "final answer."
+                    "the result enters the news pool and push page. For every news item selected "
+                    "for push, include translated_title, translated_summary, article_markdown, "
+                    "and layout_style in select_push_items so the app can show a local Chinese "
+                    "article snapshot instead of embedding the source website. Never say you "
+                    "cannot add preferences when the add_preference tool is available. Use "
+                    "Markdown in the final answer."
                 ),
             }
         ]

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 import anews_agent.api.app as app_module
 from anews_agent.config import AppConfig
+from anews_agent.domain import ArticleSnapshot
 
 
 def make_client(tmp_path, *, api_key=None, raise_server_exceptions=True):
@@ -165,6 +166,30 @@ def test_get_news_marks_item_read_in_user_state(tmp_path):
 
     assert detail["is_read"] is True
     assert next(item for item in listed if item["id"] == news_id)["is_read"] is True
+
+
+def test_get_news_includes_local_article_snapshot(tmp_path):
+    client = make_client(tmp_path)
+    run_response = client.post("/api/push/run")
+    news = run_response.json()["latest"][0]
+    repository = client.app.state.repository
+    snapshot = ArticleSnapshot.from_news(
+        news_id=news["id"],
+        source_url=news["url"],
+        title="本地中文快照",
+        source_name=news["source_name"],
+        markdown="## 本地中文快照\n\n这是应用内阅读正文。",
+        created_at=app_module._utc_now(),
+        status="translated",
+        layout_style="article",
+    )
+    repository.upsert_article_snapshot(snapshot)
+
+    detail = client.get(f"/api/news/{news['id']}").json()
+
+    assert detail["article_snapshot"]["title"] == "本地中文快照"
+    assert detail["article_snapshot"]["markdown"].startswith("## 本地中文快照")
+    assert detail["article_snapshot"]["status"] == "translated"
 
 
 def test_cors_allows_local_renderer_origin(tmp_path):

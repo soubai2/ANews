@@ -31,6 +31,12 @@ class ModelSearchPushUnavailable(RuntimeError):
         self.run = run
 
 
+class ModelSearchPushFailed(RuntimeError):
+    def __init__(self, message: str, *, run: AgentRun):
+        super().__init__(message)
+        self.run = run
+
+
 class ModelSearchPushService:
     def __init__(
         self,
@@ -53,15 +59,25 @@ class ModelSearchPushService:
             run = self._record_unavailable_run(timestamp, trigger)
             raise ModelSearchPushUnavailable("DeepSeek is not configured for model-search push", run=run)
 
-        result = self.runtime.run(
-            run_type="manual_push" if trigger == "manual" else "scheduled_push",
-            input_summary=f"{trigger} model-search push",
-            model_provider=self.settings.provider,
-            model_name=self.settings.model,
-            messages=self._push_messages(timestamp, trigger),
-        )
+        try:
+            result = self.runtime.run(
+                run_type="manual_push" if trigger == "manual" else "scheduled_push",
+                input_summary=f"{trigger} model-search push",
+                model_provider=self.settings.provider,
+                model_name=self.settings.model,
+                messages=self._push_messages(timestamp, trigger),
+            )
+        except Exception as error:
+            raise ModelSearchPushFailed(
+                str(error),
+                run=self._latest_failed_run(timestamp, trigger, str(error)),
+            ) from error
         calls = self.repository.list_agent_tool_calls(result.run.id)
-        self._validate_required_tools(result.run, calls)
+        try:
+            self._validate_required_tools(result.run, calls)
+        except Exception as error:
+            failed_run = self.repository.get_agent_run(result.run.id) or result.run
+            raise ModelSearchPushFailed(str(error), run=failed_run) from error
         self.repository.set_last_push_at(timestamp)
         return ModelSearchPushResult(
             run=result.run,
@@ -93,6 +109,23 @@ class ModelSearchPushService:
             finished_at=timestamp,
             error_message=reason,
         )
+        self.repository.upsert_agent_run(failed)
+        return failed
+
+    def _latest_failed_run(self, timestamp: datetime, trigger: str, message: str) -> AgentRun:
+        latest_runs = self.repository.list_agent_runs(limit=1)
+        if latest_runs:
+            return latest_runs[0]
+        run = AgentRun.start(
+            run_type="manual_push" if trigger == "manual" else "scheduled_push",
+            started_at=timestamp,
+            input_summary=f"{trigger} model-search push",
+            model_provider=self.settings.provider,
+            model_name=self.settings.model,
+            degraded=True,
+            degradation_reason="model_search_push_failed",
+        )
+        failed = replace(run, status="failed", finished_at=timestamp, error_message=message)
         self.repository.upsert_agent_run(failed)
         return failed
 

@@ -91,6 +91,43 @@ def test_agent_push_without_deepseek_key_returns_visible_failed_run_and_trace(tm
     assert trace_response.json()["tool_calls"] == []
 
 
+def test_agent_push_runtime_failure_returns_visible_error_payload(tmp_path, monkeypatch):
+    class BrokenService:
+        def run_once(self, now, trigger="manual"):
+            from anews_agent.agent_push import ModelSearchPushFailed
+            from anews_agent.domain import AgentRun
+
+            run = AgentRun.start(
+                run_type="manual_push",
+                started_at=now,
+                input_summary="broken",
+                degraded=True,
+                degradation_reason="model_search_push_failed",
+            )
+            failed = app_module.replace(
+                run,
+                status="failed",
+                finished_at=now,
+                error_message="deepseek network unavailable",
+            )
+            raise ModelSearchPushFailed("deepseek network unavailable", run=failed)
+
+    monkeypatch.setattr(
+        app_module,
+        "build_model_search_push_service",
+        lambda repository, config, now: BrokenService(),
+    )
+    client = make_client(tmp_path, api_key="deepseek-key")
+
+    response = client.post("/api/agent/push/run")
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["status"] == "failed"
+    assert detail["degradation_reason"] == "model_search_push_failed"
+    assert detail["error_message"] == "deepseek network unavailable"
+
+
 def test_chat_api_persists_messages_and_surfaces_deepseek_degradation(tmp_path):
     client = make_client(tmp_path)
 

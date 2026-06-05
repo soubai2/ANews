@@ -3,7 +3,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from anews_agent.agent_push import ModelSearchPushService, ModelSearchPushUnavailable
+from anews_agent.agent_push import (
+    ModelSearchPushFailed,
+    ModelSearchPushService,
+    ModelSearchPushUnavailable,
+)
 from anews_agent.agent_runtime import AgentRuntime
 from anews_agent.agent_tools import build_default_tool_registry
 from anews_agent.domain import AISettings
@@ -135,8 +139,9 @@ def test_model_search_push_fails_when_model_skips_search_tool(tmp_path):
         ],
     )
 
-    with pytest.raises(RuntimeError, match="missing_search_tool"):
+    with pytest.raises(ModelSearchPushFailed, match="missing_search_tool") as error:
         service.run_once(now)
 
+    assert error.value.run.status == "failed"
     assert repo.list_agent_runs()[0].status == "failed"
     assert repo.get_last_push_at() is None

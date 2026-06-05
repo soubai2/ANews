@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from anews_agent.agent_push import (
+    ModelSearchPushFailed,
     ModelSearchPushUnavailable,
     build_model_search_push_service,
 )
@@ -131,8 +132,18 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
                     "error_message": error.run.error_message,
                 },
             ) from error
-        except RuntimeError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+        except ModelSearchPushFailed as error:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": str(error),
+                    "run_id": error.run.id,
+                    "status": error.run.status,
+                    "degraded": error.run.degraded,
+                    "degradation_reason": error.run.degradation_reason,
+                    "error_message": error.run.error_message or str(error),
+                },
+            ) from error
         return serialize(result)
 
     @app.get("/api/news")

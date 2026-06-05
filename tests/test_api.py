@@ -48,6 +48,24 @@ def test_health_push_run_focus_follow_sources_preferences_and_ai_status(tmp_path
     assert client.get("/api/ai/status").json()["provider"] == "deepseek"
 
 
+def test_ai_and_search_status_make_degradation_visible(tmp_path):
+    client = make_client(tmp_path)
+
+    ai_status = client.get("/api/ai/status").json()
+    search_status = client.get("/api/search/status").json()
+
+    assert ai_status["provider"] == "deepseek"
+    assert ai_status["available"] is False
+    assert ai_status["degraded"] is True
+    assert ai_status["degradation_reason"] == "deepseek_api_key_missing"
+    assert search_status["provider"] == "tavily"
+    assert search_status["configured"] is False
+    assert search_status["available"] is False
+    assert search_status["degraded"] is True
+    assert search_status["degradation_reason"] == "search_api_key_missing"
+    assert search_status["live_check"] is False
+
+
 def test_get_missing_news_returns_404(tmp_path):
     client = make_client(tmp_path)
 

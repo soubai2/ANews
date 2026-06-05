@@ -82,6 +82,20 @@ function extractSourceUrl(text) {
   return match?.[1]?.replace(/[，。,.]+$/, "") || "";
 }
 
+function providerStateLabel(statusValue) {
+  if (!statusValue) return "未知";
+  if (statusValue.available && !statusValue.degraded) return "可用";
+  if (statusValue.degraded) return "降级";
+  return "不可用";
+}
+
+function providerStateClass(statusValue) {
+  if (!statusValue) return "status-pill status-pill--muted";
+  if (statusValue.available && !statusValue.degraded) return "status-pill status-pill--ok";
+  if (statusValue.degraded) return "status-pill status-pill--warn";
+  return "status-pill status-pill--muted";
+}
+
 function NewsCard({ item, onFocus, onFollow, onOpen }) {
   const tags = asArray(item.tags).slice(0, 4);
   const reasons = asArray(item.recommendation_reasons).slice(0, 2);
@@ -168,6 +182,7 @@ export function App() {
   const [preferences, setPreferences] = useState([]);
   const [follows, setFollows] = useState([]);
   const [aiStatus, setAiStatus] = useState(null);
+  const [searchStatus, setSearchStatus] = useState(null);
   const [selectedNews, setSelectedNews] = useState(null);
   const [readerUrl, setReaderUrl] = useState("");
   const [sourceForm, setSourceForm] = useState({
@@ -181,18 +196,20 @@ export function App() {
   async function refreshAll() {
     try {
       await api.health();
-      const [push, sourceList, preferenceList, followList, ai] = await Promise.all([
+      const [push, sourceList, preferenceList, followList, ai, search] = await Promise.all([
         api.getPush(),
         api.listSources(),
         api.listPreferences(),
         api.listFollows(),
         api.aiStatus(),
+        api.searchStatus(),
       ]);
       setBundle(normalizeBundle(push));
       setSources(asArray(sourceList));
       setPreferences(asArray(preferenceList));
       setFollows(asArray(followList));
       setAiStatus(ai || null);
+      setSearchStatus(search || null);
       setStatus("已连接");
     } catch (error) {
       setStatus(`后端不可用：${formatError(error)}`);
@@ -407,6 +424,15 @@ export function App() {
             <h1>新闻推送 Agent</h1>
           </div>
           <div className="topbar__status">
+            <span className={providerStateClass(aiStatus)} title={aiStatus?.degradation_reason || ""}>
+              DeepSeek {providerStateLabel(aiStatus)}
+            </span>
+            <span
+              className={providerStateClass(searchStatus)}
+              title={searchStatus?.degradation_reason || searchStatus?.live_check_note || ""}
+            >
+              搜索 API {providerStateLabel(searchStatus)}
+            </span>
             <span className="connection-status" title={status}>
               {status}
             </span>
@@ -625,24 +651,52 @@ export function App() {
         )}
 
         {active === "settings" && (
-          <section className="panel">
-            <header className="panel__header">
-              <h2>DeepSeek 设置</h2>
-              <span>{aiStatus?.enabled === false ? "已关闭" : "已启用"}</span>
-            </header>
-            <div className="settings-grid">
-              <span>Provider</span>
-              <strong>{aiStatus?.provider || "deepseek"}</strong>
-              <span>Model</span>
-              <strong>{aiStatus?.model || "deepseek-v4-flash"}</strong>
-              <span>Base URL</span>
-              <strong>{aiStatus?.base_url || "https://api.deepseek.com"}</strong>
-              <span>API Key</span>
-              <strong>{aiStatus?.api_key_configured ? "已配置" : "未配置"}</strong>
-              <span>Fallback</span>
-              <strong>{aiStatus?.fallback_enabled ? "启用" : "关闭"}</strong>
-            </div>
-          </section>
+          <div className="settings-stack">
+            <section className="panel">
+              <header className="panel__header">
+                <h2>DeepSeek 设置</h2>
+                <span>{providerStateLabel(aiStatus)}</span>
+              </header>
+              <div className="settings-grid">
+                <span>Provider</span>
+                <strong>{aiStatus?.provider || "deepseek"}</strong>
+                <span>Model</span>
+                <strong>{aiStatus?.model || "deepseek-v4-flash"}</strong>
+                <span>Base URL</span>
+                <strong>{aiStatus?.base_url || "https://api.deepseek.com"}</strong>
+                <span>API Key</span>
+                <strong>{aiStatus?.api_key_configured ? "已配置" : "未配置"}</strong>
+                <span>可用状态</span>
+                <strong>{providerStateLabel(aiStatus)}</strong>
+                <span>降级原因</span>
+                <strong>{aiStatus?.degradation_reason || "无"}</strong>
+                <span>Fallback</span>
+                <strong>{aiStatus?.fallback_enabled ? "启用" : "关闭"}</strong>
+              </div>
+            </section>
+            <section className="panel">
+              <header className="panel__header">
+                <h2>搜索 API</h2>
+                <span>{providerStateLabel(searchStatus)}</span>
+              </header>
+              <div className="settings-grid">
+                <span>Provider</span>
+                <strong>{searchStatus?.provider || "tavily"}</strong>
+                <span>API Key</span>
+                <strong>{searchStatus?.configured ? "已配置" : "未配置"}</strong>
+                <span>可用状态</span>
+                <strong>{providerStateLabel(searchStatus)}</strong>
+                <span>降级原因</span>
+                <strong>{searchStatus?.degradation_reason || "无"}</strong>
+                <span>搜索深度</span>
+                <strong>{searchStatus?.search_depth || "basic"}</strong>
+                <span>额度策略</span>
+                <strong>{searchStatus?.credit_policy || "basic search uses 1 Tavily API credit"}</strong>
+                <span>探活</span>
+                <strong>{searchStatus?.live_check_note || "未执行"}</strong>
+              </div>
+            </section>
+          </div>
         )}
       </main>
 

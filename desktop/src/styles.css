@@ -175,6 +175,34 @@ select {
   white-space: nowrap;
 }
 
+.status-pill {
+  border: 1px solid;
+  border-radius: 999px;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 3px 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-pill--ok {
+  background: #eef8f3;
+  border-color: #b8dccb;
+  color: #176b4d !important;
+}
+
+.status-pill--warn {
+  background: #fff8e8;
+  border-color: #e7c978;
+  color: #775512 !important;
+}
+
+.status-pill--muted {
+  background: #f1f3f5;
+  border-color: #d1d7de;
+  color: #687385 !important;
+}
+
 .summary-strip {
   align-items: center;
   border-bottom: 1px solid #e0e4e9;
@@ -444,6 +472,11 @@ select {
   gap: 10px 18px;
   grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
   max-width: 760px;
+}
+
+.settings-stack {
+  display: grid;
+  gap: 18px;
 }
 
 .settings-grid span {

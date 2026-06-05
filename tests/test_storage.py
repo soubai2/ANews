@@ -1,7 +1,24 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from anews_agent.domain import AISettings, NewsItem, Source, UserPreference
+from anews_agent.domain import (
+    AISettings,
+    AgentRun,
+    AgentToolCall,
+    CandidateNews,
+    ChatMessage,
+    ChatSession,
+    NewsItem,
+    NewsUserState,
+    PreferenceFact,
+    PreferenceSummary,
+    PushSelection,
+    RetrievedDocument,
+    SearchQuery,
+    SearchResult,
+    Source,
+    UserPreference,
+)
 from anews_agent.storage import NewsRepository
 
 
@@ -248,3 +265,170 @@ def test_ai_settings_persist_only_api_key_configured_flag(tmp_path):
     assert "api_key" not in settings_columns
     assert "secret-key" not in repr(settings_row)
     assert "secret-key" not in repr(app_state_rows)
+
+
+def test_news_user_state_survives_repository_restart(tmp_path):
+    db_path = tmp_path / "anews.db"
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    repo = NewsRepository(db_path)
+
+    repo.upsert_news_user_state(
+        NewsUserState(
+            news_id="news_1",
+            is_read=True,
+            is_focused=True,
+            is_followed=True,
+            last_action_at=now,
+        )
+    )
+
+    restarted = NewsRepository(db_path)
+    stored = restarted.get_news_user_state("news_1")
+    missing = restarted.get_news_user_state("missing")
+
+    assert stored.is_read is True
+    assert stored.is_focused is True
+    assert stored.is_followed is True
+    assert stored.last_action_at == now
+    assert missing.news_id == "missing"
+    assert missing.is_followed is False
+
+
+def test_repository_persists_agent_run_tool_calls_and_chat_messages(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    run = AgentRun.start(
+        run_type="manual_push",
+        started_at=now,
+        input_summary="refresh AI chip news",
+        model_name="deepseek-v4-flash",
+        degraded=True,
+        degradation_reason="search_api_missing_key",
+    )
+    call = AgentToolCall.from_call(
+        run_id=run.id,
+        sequence=1,
+        tool_name="query_preferences",
+        arguments={"task": "push"},
+        result={"facts": 2},
+        status="success",
+        started_at=now,
+        finished_at=now,
+    )
+    session = ChatSession.start(title="AI 芯片", now=now)
+    message = ChatMessage.from_content(
+        session_id=session.id,
+        role="assistant",
+        content="已根据来源整理。",
+        created_at=now,
+        agent_run_id=run.id,
+        citations=["https://example.com/news"],
+    )
+
+    repo.upsert_agent_run(run)
+    repo.append_agent_tool_call(call)
+    repo.upsert_chat_session(session)
+    repo.append_chat_message(message)
+
+    stored_run = repo.get_agent_run(run.id)
+
+    assert stored_run is not None
+    assert stored_run.degraded is True
+    assert stored_run.degradation_reason == "search_api_missing_key"
+    assert repo.list_agent_runs()[0].id == run.id
+    assert repo.list_agent_tool_calls(run.id)[0].result == {"facts": 2}
+    assert repo.list_chat_sessions()[0].id == session.id
+    assert repo.list_chat_messages(session.id)[0].citations == ["https://example.com/news"]
+
+
+def test_repository_persists_search_documents_candidates_and_selections(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    run = AgentRun.start(run_type="manual_push", started_at=now)
+    query = SearchQuery.from_query(
+        run_id=run.id,
+        query="AI chip news",
+        provider="tavily",
+        topic="news",
+        max_results=3,
+        created_at=now,
+        start_date="2026-06-05",
+        end_date="2026-06-05",
+        response_id="resp_1",
+        credits_used=1,
+    )
+    result = SearchResult.from_result(
+        query_id=query.id,
+        title="AI chip update",
+        url="https://example.com/ai-chip",
+        content="A company shipped an AI chip.",
+        score=0.91,
+        source="Example",
+        published_at=now,
+    )
+    document = RetrievedDocument.from_url(
+        url=result.url,
+        title=result.title,
+        content="A company shipped an AI chip with details.",
+        fetched_at=now,
+        source="Example",
+        published_at=now,
+    )
+    candidate = CandidateNews.from_evidence(
+        run_id=run.id,
+        title=result.title,
+        url=result.url,
+        source_name="Example",
+        summary="A company shipped an AI chip.",
+        published_at=now,
+        evidence_urls=[result.url],
+        score=8.2,
+        selected=True,
+    )
+    selection = PushSelection.from_news(
+        run_id=run.id,
+        section="latest",
+        news_id="news_1",
+        rank=1,
+        reason="来自 Tavily 搜索证据",
+    )
+
+    repo.upsert_agent_run(run)
+    repo.upsert_search_query(query)
+    repo.upsert_search_result(result)
+    repo.upsert_retrieved_document(document)
+    repo.upsert_candidate_news(candidate)
+    repo.upsert_push_selection(selection)
+
+    assert repo.get_search_query(query.id).provider == "tavily"
+    assert repo.list_search_results(query.id)[0].url == result.url
+    assert repo.get_retrieved_document(result.url).excerpt.startswith("A company shipped")
+    assert repo.list_candidate_news(run.id)[0].selected is True
+    assert repo.list_push_selections(run.id)[0].reason == "来自 Tavily 搜索证据"
+
+
+def test_repository_persists_preference_facts_and_summary_with_fts(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    fact = PreferenceFact.from_value(
+        kind="topic",
+        value="AI chips",
+        polarity="positive",
+        weight=2.0,
+        source="chat",
+        evidence="用户说多看 AI 芯片。",
+        created_at=now,
+        updated_at=now,
+    )
+    summary = PreferenceSummary.from_summary(
+        summary="用户高度关注 AI 芯片和公司公告。",
+        created_at=now,
+        token_estimate=18,
+    )
+
+    repo.upsert_preference_fact(fact)
+    repo.upsert_preference_summary(summary)
+
+    assert repo.list_preference_facts()[0].value == "AI chips"
+    assert repo.search_preference_facts("chips")[0].id == fact.id
+    assert repo.latest_preference_summary().summary == "用户高度关注 AI 芯片和公司公告。"

@@ -14,6 +14,7 @@ from anews_agent.ai import NewsAIService
 from anews_agent.config import AppConfig
 from anews_agent.domain import AISettings, Source, SourceType
 from anews_agent.scheduler import create_push_scheduler
+from anews_agent.search import build_search_provider
 from anews_agent.services import FollowService, NewsPushService, PreferenceService, SourceService
 from anews_agent.sources import DeterministicNewsSource, URLSourceAdapter
 from anews_agent.storage import NewsRepository
@@ -164,7 +165,34 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
 
     @app.get("/api/ai/status")
     def ai_status() -> Any:
-        return serialize(repository.get_ai_settings())
+        settings = repository.get_ai_settings()
+        available = settings.enabled and settings.api_key_configured
+        degradation_reason = None
+        if not settings.enabled:
+            degradation_reason = "ai_disabled"
+        elif not settings.api_key_configured:
+            degradation_reason = "deepseek_api_key_missing"
+        return {
+            **serialize(settings),
+            "available": available,
+            "degraded": not available,
+            "degradation_reason": degradation_reason,
+        }
+
+    @app.get("/api/search/status")
+    def search_status() -> Any:
+        provider = build_search_provider(
+            provider=resolved_config.search_provider,
+            api_key=resolved_config.search_api_key,
+            base_url=resolved_config.search_base_url,
+            timeout_seconds=resolved_config.search_timeout_seconds,
+        )
+        status = provider.status()
+        return {
+            **serialize(status),
+            "live_check": False,
+            "live_check_note": "状态只表示配置可用性；手动探活会消耗搜索额度。",
+        }
 
     @app.patch("/api/ai/settings")
     def update_ai_settings(payload: AISettingsPatchRequest) -> Any:

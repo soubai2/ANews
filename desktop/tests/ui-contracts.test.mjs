@@ -38,3 +38,14 @@ test("api request merges custom headers without dropping defaults", () => {
   assert.match(api, /\.\.\.requestOptions,\s*headers: \{/);
   assert.match(api, /"Content-Type": "application\/json",\s*\.\.\.headers,/);
 });
+
+test("app exposes ai and search provider degradation status", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const api = readDesktopFile("src/api.js");
+
+  assert.match(api, /searchStatus: \(\) => request\("\/api\/search\/status"\)/);
+  assert.match(app, /DeepSeek \{providerStateLabel\(aiStatus\)\}/);
+  assert.match(app, /搜索 API \{providerStateLabel\(searchStatus\)\}/);
+  assert.match(app, /degradation_reason/);
+  assert.match(app, /live_check_note/);
+});

@@ -34,6 +34,7 @@ export const api = {
   listFollows: () => request("/api/follows"),
   cancelFollow: (id) => request(`/api/follows/${id}`, { method: "DELETE" }),
   aiStatus: () => request("/api/ai/status"),
+  searchStatus: () => request("/api/search/status"),
   updateAISettings: (payload) =>
     request("/api/ai/settings", { method: "PATCH", body: JSON.stringify(payload) }),
   testAI: () => request("/api/ai/test", { method: "POST" }),

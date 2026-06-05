@@ -90,31 +90,47 @@ Set-Location ..
 
 ## 运行项目
 
-方式一：直接启动 Electron。Electron 会自动启动本地后端，并将后端绑定到 `127.0.0.1:8765`。
+仅启动后端，适合调试 API：
 
 ```powershell
-Set-Location desktop
-npm start
-```
-
-方式二：分别启动后端和前端，适合调试 API 与 UI。
-
-```powershell
-# 终端 1：启动后端
 .\.venv\Scripts\Activate.ps1
 python -m anews_agent.api.server
-```
-
-```powershell
-# 终端 2：启动桌面端
-Set-Location desktop
-npm start
 ```
 
 后端健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8765/api/health
+```
+
+调试 React 页面，需先启动后端：
+
+```powershell
+Set-Location desktop
+npm run dev
+```
+
+调试 Electron 桌面壳，Electron 会自动启动本地后端：
+
+```powershell
+# 终端 1：启动 Vite
+Set-Location desktop
+npm run dev
+```
+
+```powershell
+# 终端 2：启动 Electron 并加载 Vite 页面
+Set-Location desktop
+$env:VITE_DEV_SERVER_URL="http://127.0.0.1:5173"
+npm run electron
+```
+
+运行构建后的桌面 App：
+
+```powershell
+Set-Location desktop
+npm run build
+npm run electron
 ```
 
 ## 常用 API
@@ -165,6 +181,6 @@ npm run build
 ## 开发备注
 
 - 桌面端 API Base 固定为 `http://127.0.0.1:8765`。
-- Electron main 进程会以 `python -m anews_agent.api.server` 启动后端，并设置 `PYTHONPATH=src`。
+- Electron main 进程会以 `python -m anews_agent.api.server` 启动后端，并设置 `PYTHONPATH=src`；调试 Electron 时不要再手动启动第二个后端进程。
 - 定时推送由 APScheduler 驱动，默认间隔来自 `ANEWS_PUSH_INTERVAL_HOURS`，默认值为 2。
 - 模型搜索推送要求先查询偏好，再执行搜索或读 URL，最后选择推送项；运行轨迹可通过 `/api/agent/runs/{run_id}/trace` 查看。

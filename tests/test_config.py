@@ -103,6 +103,16 @@ def test_environment_variables_override_local_env_file(monkeypatch, tmp_path):
     assert config.search_api_key == "env-search-key"
 
 
+def test_relative_db_path_is_resolved_from_env_file_directory(monkeypatch, tmp_path):
+    env_file = tmp_path / ".anews.env"
+    env_file.write_text("ANEWS_DB_PATH=data/local.db\n", encoding="utf-8")
+    monkeypatch.delenv("ANEWS_DB_PATH", raising=False)
+
+    config = AppConfig.from_env(env_file=env_file)
+
+    assert config.db_path == tmp_path / "data" / "local.db"
+
+
 def test_load_env_file_ignores_comments_and_strips_quotes(tmp_path):
     env_file = tmp_path / ".anews.env"
     env_file.write_text(

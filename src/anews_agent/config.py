@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 @dataclass(frozen=True)
 class AppConfig:
     db_path: Path
@@ -22,8 +25,13 @@ class AppConfig:
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "AppConfig":
-        file_values = load_env_file(Path(env_file) if env_file is not None else Path(".anews.env"))
-        db_path = Path(_setting(file_values, "ANEWS_DB_PATH", default="anews.db"))
+        resolved_env_file = Path(env_file) if env_file is not None else PROJECT_ROOT / ".anews.env"
+        file_values = load_env_file(resolved_env_file)
+        db_path = Path(
+            _setting(file_values, "ANEWS_DB_PATH", default=str(PROJECT_ROOT / "anews.db"))
+        )
+        if not db_path.is_absolute():
+            db_path = resolved_env_file.parent / db_path
         api_key = _setting(file_values, "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
         search_api_key = _setting(file_values, "ANEWS_SEARCH_API_KEY", "TAVILY_API_KEY")
         return cls(

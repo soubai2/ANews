@@ -11,7 +11,17 @@ async function request(path, options = {}) {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    let detail = null;
+    try {
+      detail = JSON.parse(text).detail;
+    } catch {
+      detail = null;
+    }
+    const message =
+      detail?.message || detail?.error_message || text || `Request failed: ${response.status}`;
+    const error = new Error(message);
+    error.detail = detail;
+    throw error;
   }
   return response.json();
 }
@@ -20,6 +30,8 @@ export const api = {
   health: () => request("/api/health"),
   getPush: () => request("/api/push"),
   runPush: () => request("/api/push/run", { method: "POST" }),
+  runAgentPush: () => request("/api/agent/push/run", { method: "POST" }),
+  getAgentRunTrace: (id) => request(`/api/agent/runs/${id}/trace`),
   listNews: (query = "") => request(`/api/news?q=${encodeURIComponent(query)}`),
   getNews: (id) => request(`/api/news/${id}`),
   focusNews: (id) => request(`/api/news/${id}/focus`, { method: "POST" }),

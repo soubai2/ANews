@@ -10,6 +10,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from anews_agent.agent_push import (
+    ModelSearchPushUnavailable,
+    build_model_search_push_service,
+)
 from anews_agent.ai import NewsAIService
 from anews_agent.config import AppConfig
 from anews_agent.domain import AISettings, Source, SourceType
@@ -96,9 +100,54 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
         service = build_push_service(repository, resolved_config, now=now)
         return serialize(service.run_once(now))
 
+    @app.post("/api/agent/push/run")
+    def run_agent_push() -> Any:
+        now = _utc_now()
+        service = build_model_search_push_service(
+            repository,
+            resolved_config,
+            now=lambda: now,
+        )
+        try:
+            result = service.run_once(now, trigger="manual")
+        except ModelSearchPushUnavailable as error:
+            raise HTTPException(
+                status_code=424,
+                detail={
+                    "message": str(error),
+                    "run_id": error.run.id,
+                    "status": error.run.status,
+                    "degraded": error.run.degraded,
+                    "degradation_reason": error.run.degradation_reason,
+                    "error_message": error.run.error_message,
+                },
+            ) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return serialize(result)
+
     @app.get("/api/news")
     def search_news(q: str = "") -> Any:
         return serialize(repository.search_news(q))
+
+    @app.get("/api/agent/runs/{run_id}")
+    def get_agent_run(run_id: str) -> Any:
+        run = repository.get_agent_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Agent run not found")
+        return serialize(run)
+
+    @app.get("/api/agent/runs/{run_id}/trace")
+    def get_agent_run_trace(run_id: str) -> Any:
+        run = repository.get_agent_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Agent run not found")
+        return {
+            "run": serialize(run),
+            "tool_calls": serialize(repository.list_agent_tool_calls(run_id)),
+            "search_queries": serialize(repository.list_search_queries_for_run(run_id)),
+            "push_selections": serialize(repository.list_push_selections(run_id)),
+        }
 
     @app.get("/api/news/{news_id}")
     def get_news(news_id: str) -> Any:

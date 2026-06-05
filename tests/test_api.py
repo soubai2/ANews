@@ -66,6 +66,27 @@ def test_ai_and_search_status_make_degradation_visible(tmp_path):
     assert search_status["live_check"] is False
 
 
+def test_agent_push_without_deepseek_key_returns_visible_failed_run_and_trace(tmp_path):
+    client = make_client(tmp_path)
+
+    response = client.post("/api/agent/push/run")
+
+    assert response.status_code == 424
+    detail = response.json()["detail"]
+    assert detail["status"] == "failed"
+    assert detail["degraded"] is True
+    assert detail["degradation_reason"] == "deepseek_api_key_missing"
+
+    run_response = client.get(f"/api/agent/runs/{detail['run_id']}")
+    trace_response = client.get(f"/api/agent/runs/{detail['run_id']}/trace")
+
+    assert run_response.status_code == 200
+    assert run_response.json()["error_message"] == "deepseek_api_key_missing"
+    assert trace_response.status_code == 200
+    assert trace_response.json()["run"]["id"] == detail["run_id"]
+    assert trace_response.json()["tool_calls"] == []
+
+
 def test_get_missing_news_returns_404(tmp_path):
     client = make_client(tmp_path)
 

@@ -183,6 +183,7 @@ export function App() {
   const [follows, setFollows] = useState([]);
   const [aiStatus, setAiStatus] = useState(null);
   const [searchStatus, setSearchStatus] = useState(null);
+  const [lastAgentRun, setLastAgentRun] = useState(null);
   const [selectedNews, setSelectedNews] = useState(null);
   const [readerUrl, setReaderUrl] = useState("");
   const [sourceForm, setSourceForm] = useState({
@@ -217,13 +218,16 @@ export function App() {
   }
 
   async function runPush() {
-    setStatus("正在推送");
+    setStatus("正在通过模型搜索推送");
     try {
-      const push = await api.runPush();
-      setBundle(normalizeBundle(push));
+      const result = await api.runAgentPush();
+      setLastAgentRun(result?.run || null);
+      setStatus(`模型推送完成：${result?.run?.id || "已完成"}`);
       await refreshAll();
     } catch (error) {
-      setStatus(`推送失败：${formatError(error)}`);
+      setLastAgentRun(error.detail || null);
+      const reason = error.detail?.degradation_reason || error.detail?.error_message;
+      setStatus(`模型推送失败：${reason || formatError(error)}`);
     }
   }
 
@@ -694,6 +698,22 @@ export function App() {
                 <strong>{searchStatus?.credit_policy || "basic search uses 1 Tavily API credit"}</strong>
                 <span>探活</span>
                 <strong>{searchStatus?.live_check_note || "未执行"}</strong>
+              </div>
+            </section>
+            <section className="panel">
+              <header className="panel__header">
+                <h2>最近 Agent 推送</h2>
+                <span>{lastAgentRun?.status || "暂无"}</span>
+              </header>
+              <div className="settings-grid">
+                <span>Run ID</span>
+                <strong>{lastAgentRun?.id || lastAgentRun?.run_id || "无"}</strong>
+                <span>状态</span>
+                <strong>{lastAgentRun?.status || "无"}</strong>
+                <span>是否降级</span>
+                <strong>{lastAgentRun?.degraded ? "是" : "否"}</strong>
+                <span>降级原因</span>
+                <strong>{lastAgentRun?.degradation_reason || "无"}</strong>
               </div>
             </section>
           </div>

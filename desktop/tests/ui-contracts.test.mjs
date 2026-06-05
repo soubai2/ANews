@@ -37,6 +37,7 @@ test("api request merges custom headers without dropping defaults", () => {
   assert.match(api, /const \{ headers = \{\}, \.\.\.requestOptions \} = options;/);
   assert.match(api, /\.\.\.requestOptions,\s*headers: \{/);
   assert.match(api, /"Content-Type": "application\/json",\s*\.\.\.headers,/);
+  assert.match(api, /error\.detail = detail;/);
 });
 
 test("app exposes ai and search provider degradation status", () => {
@@ -48,4 +49,15 @@ test("app exposes ai and search provider degradation status", () => {
   assert.match(app, /搜索 API \{providerStateLabel\(searchStatus\)\}/);
   assert.match(app, /degradation_reason/);
   assert.match(app, /live_check_note/);
+});
+
+test("manual push uses agent push endpoint and surfaces degradation", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const api = readDesktopFile("src/api.js");
+
+  assert.match(api, /runAgentPush: \(\) => request\("\/api\/agent\/push\/run"/);
+  assert.match(api, /getAgentRunTrace/);
+  assert.match(app, /api\.runAgentPush\(\)/);
+  assert.match(app, /模型推送失败/);
+  assert.match(app, /degradation_reason/);
 });

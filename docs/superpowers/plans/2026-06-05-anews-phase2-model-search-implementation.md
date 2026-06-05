@@ -117,15 +117,15 @@
 - Test: `tests/test_agent_push.py`
 - Test: `tests/test_api.py`
 
-- [ ] Create `ModelSearchPushService`.
-- [ ] Implement push prompt that forces the model to first call `query_preferences`.
-- [ ] Force every real push run to use search tools before `select_push_items`.
-- [ ] Include user specified sources and followed stories in the model search planning prompt.
+- [x] Create `ModelSearchPushService`.
+- [x] Implement push prompt that forces the model to first call `query_preferences`.
+- [x] Force every real push run to use search tools before `select_push_items`.
+- [x] Include user specified sources and followed stories in the model search planning prompt.
 - [ ] Validate final push selection has source URLs, evidence and recommendation reasons.
 - [ ] Keep old deterministic push service only for explicit demo/test mode.
-- [ ] Add `POST /api/agent/push/run`.
+- [x] Add `POST /api/agent/push/run`.
 - [ ] Make existing `POST /api/push/run` call the model-search path in real mode.
-- [ ] Do not advance `last_push_at` when model, search or validation fails.
+- [x] Do not advance `last_push_at` when model, search or validation fails.
 - [ ] Add tests proving scheduled and manual push both go through Agent tool calls.
 
 ## Task 7: Chat Sessions And Real News Conversation
@@ -183,8 +183,8 @@
 - Modify: `desktop/src/App.jsx`
 - Test: `tests/test_api.py`
 
-- [ ] Add `GET /api/agent/runs/{run_id}`.
-- [ ] Add `GET /api/agent/runs/{run_id}/trace`.
+- [x] Add `GET /api/agent/runs/{run_id}`.
+- [x] Add `GET /api/agent/runs/{run_id}/trace`.
 - [ ] Show recent Agent run trace in settings or debug panel.
 - [ ] Include searched queries, read URLs, selected news and filtered reasons.
 - [ ] Add smoke script or documented commands for:

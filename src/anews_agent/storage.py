@@ -862,6 +862,18 @@ class NewsRepository:
             ).fetchone()
         return self._row_to_search_query(row) if row is not None else None
 
+    def list_search_queries_for_run(self, run_id: str) -> list[SearchQuery]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM search_queries
+                WHERE run_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [self._row_to_search_query(row) for row in rows]
+
     def upsert_search_result(self, result: SearchResult) -> None:
         with self._connect() as conn:
             conn.execute(

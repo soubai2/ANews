@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from anews_agent.domain import CandidateNews, PushSelection
+from anews_agent.domain import CandidateNews, NewsItem, PushSelection
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import SearchRequest, SearchService
 from anews_agent.storage import NewsRepository
@@ -169,7 +169,7 @@ def build_default_tool_registry(
                 },
                 required=["run_id", "items"],
             ),
-            handler=lambda args: _select_push_items(repository, args),
+            handler=lambda args: _select_push_items(repository, args, clock()),
         )
     )
     registry.register(
@@ -322,23 +322,128 @@ def _write_candidate_news(
     return {"stored_candidate_ids": stored}
 
 
-def _select_push_items(repository: NewsRepository, args: dict[str, Any]) -> dict[str, Any]:
+def _select_push_items(
+    repository: NewsRepository, args: dict[str, Any], now: datetime
+) -> dict[str, Any]:
     run_id = _required_str(args, "run_id")
+    candidates_by_id = {
+        candidate.id: candidate for candidate in repository.list_candidate_news(run_id)
+    }
     stored: list[str] = []
+    selected_news_ids: list[str] = []
+    latest_news_ids: list[str] = []
     for index, item in enumerate(_list_arg(args, "items")):
         if not isinstance(item, dict):
             continue
+        section = _normalize_section(str(item.get("section") or "relevant"))
+        news_id = _str_arg(item, "news_id", "")
+        candidate_id = _str_arg(item, "candidate_id", "") or _str_arg(item, "id", "")
+        candidate = candidates_by_id.get(news_id) or candidates_by_id.get(candidate_id)
+        if candidate is not None:
+            news = _news_from_candidate(candidate, item, section=section, now=now)
+            repository.upsert_news(news)
+            repository.upsert_candidate_news(replace(candidate, selected=True))
+            news_id = news.id
+        elif not news_id and _str_arg(item, "title", "") and _str_arg(item, "url", ""):
+            news = _news_from_selection_item(item, section=section, now=now)
+            repository.upsert_news(news)
+            news_id = news.id
+        if not news_id:
+            continue
         selection = PushSelection.from_news(
             run_id=run_id,
-            section=str(item.get("section") or "relevant"),
-            news_id=str(item.get("news_id") or ""),
+            section=section,
+            news_id=news_id,
             rank=int(item.get("rank") or index + 1),
             reason=str(item.get("reason") or ""),
         )
-        if selection.news_id:
-            repository.upsert_push_selection(selection)
-            stored.append(selection.id)
-    return {"stored_selection_ids": stored}
+        repository.upsert_push_selection(selection)
+        stored.append(selection.id)
+        selected_news_ids.append(news_id)
+        if section == "latest":
+            latest_news_ids.append(news_id)
+    if latest_news_ids:
+        repository.set_last_push_news_ids(latest_news_ids)
+    elif selected_news_ids:
+        repository.set_last_push_news_ids(selected_news_ids)
+    return {"stored_selection_ids": stored, "news_ids": selected_news_ids}
+
+
+def _normalize_section(value: str) -> str:
+    section = value.strip().lower().replace("-", "_")
+    if section in {"latest", "relevant", "follow_updates"}:
+        return section
+    if section in {"follow", "followup", "follow_up", "follow_update"}:
+        return "follow_updates"
+    return "relevant"
+
+
+def _news_from_candidate(
+    candidate: CandidateNews, item: dict[str, Any], *, section: str, now: datetime
+) -> NewsItem:
+    reason = _selection_reason(item)
+    return NewsItem.from_raw(
+        title=candidate.title,
+        url=candidate.url,
+        source_name=candidate.source_name or _source_from_url(candidate.url),
+        published_at=candidate.published_at or _item_published_at(item) or now,
+        fetched_at=now,
+        summary=candidate.summary,
+        tags=_string_list(item.get("tags")),
+        entities=_string_list(item.get("entities")),
+        category=_str_arg(item, "category", "general"),
+        importance_score=_selection_score(item, default=candidate.score),
+        recommendation_reasons=[reason] if reason else ["Selected by model search"],
+        is_follow_update=section == "follow_updates",
+        pushed=True,
+    )
+
+
+def _news_from_selection_item(
+    item: dict[str, Any], *, section: str, now: datetime
+) -> NewsItem:
+    reason = _selection_reason(item)
+    url = _required_str(item, "url")
+    return NewsItem.from_raw(
+        title=_required_str(item, "title"),
+        url=url,
+        source_name=_str_arg(item, "source_name", "")
+        or _str_arg(item, "source", "")
+        or _source_from_url(url),
+        published_at=_item_published_at(item) or now,
+        fetched_at=now,
+        summary=_str_arg(item, "summary", ""),
+        tags=_string_list(item.get("tags")),
+        entities=_string_list(item.get("entities")),
+        category=_str_arg(item, "category", "general"),
+        importance_score=_selection_score(item, default=0.0),
+        recommendation_reasons=[reason] if reason else ["Selected by model search"],
+        is_follow_update=section == "follow_updates",
+        pushed=True,
+    )
+
+
+def _item_published_at(item: dict[str, Any]) -> datetime | None:
+    return _parse_iso(item.get("published_at")) or _parse_iso(item.get("published"))
+
+
+def _selection_reason(item: dict[str, Any]) -> str:
+    return (
+        _str_arg(item, "reason", "")
+        or _str_arg(item, "recommendation_reason", "")
+        or _str_arg(item, "recommendation", "")
+    )
+
+
+def _selection_score(item: dict[str, Any], *, default: float) -> float:
+    if item.get("score") is not None:
+        return _float_arg(item.get("score"), default=default)
+    return _float_arg(item.get("relevance_score"), default=default)
+
+
+def _source_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    return parsed.netloc or "Unknown"
 
 
 def _follow_story(repository: NewsRepository, args: dict[str, Any], now: datetime) -> dict[str, Any]:

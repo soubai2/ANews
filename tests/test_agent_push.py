@@ -1,18 +1,22 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from anews_agent.ai import NewsAIService
 from anews_agent.agent_push import (
     ModelSearchPushFailed,
     ModelSearchPushService,
     ModelSearchPushUnavailable,
+    PUSH_NON_BUDGETED_TOOL_NAMES,
+    PUSH_RUN_SCOPED_TOOL_NAMES,
 )
 from anews_agent.agent_runtime import AgentRuntime
 from anews_agent.agent_tools import build_default_tool_registry
-from anews_agent.domain import AISettings
+from anews_agent.domain import AISettings, AgentRun, CandidateNews
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import BasicWebReader, MockSearchProvider, SearchService
+from anews_agent.services import NewsPushService
 from anews_agent.storage import NewsRepository
 
 
@@ -71,6 +75,9 @@ def make_service(tmp_path, responses):
         repository=repo,
         registry=registry,
         model=FakeModel(responses),
+        non_budgeted_tool_names=PUSH_NON_BUDGETED_TOOL_NAMES,
+        run_scoped_tool_names=PUSH_RUN_SCOPED_TOOL_NAMES,
+        budget_recovery_tool_names=PUSH_RUN_SCOPED_TOOL_NAMES,
         now=lambda: now,
     )
     service = ModelSearchPushService(
@@ -101,6 +108,26 @@ def test_model_search_push_requires_deepseek_configuration(tmp_path):
     assert repo.get_last_push_at() is None
 
 
+def test_model_search_push_prompt_constrains_tool_budget(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    service = ModelSearchPushService(
+        repository=repo,
+        runtime=object(),
+        settings=AISettings.default(),
+        api_key="deepseek-key",
+    )
+
+    prompt = "\n".join(message["content"] for message in service._push_messages(
+        datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc),
+        "manual",
+    ))
+
+    assert "tool budget" in prompt
+    assert "at most 3 search" in prompt
+    assert "at most 4 unique URLs" in prompt
+    assert "select_push_items before final answer" in prompt
+
+
 def test_model_search_push_validates_required_tool_sequence_and_advances_last_push(tmp_path):
     repo, service, now = make_service(
         tmp_path,
@@ -124,6 +151,96 @@ def test_model_search_push_validates_required_tool_sequence_and_advances_last_pu
         "select_push_items",
     ]
     assert repo.get_last_push_at() == now
+
+
+def test_model_search_push_persists_selection_under_actual_run_id(tmp_path):
+    repo, service, now = make_service(
+        tmp_path,
+        [
+            tool_response("query_preferences", {"task": "push"}),
+            tool_response("search_web", {"query": "AI chip", "max_results": 1}),
+            tool_response(
+                "select_push_items",
+                {
+                    "run_id": "model_guess",
+                    "items": [{"section": "latest", "news_id": "news_1", "reason": "match"}],
+                },
+            ),
+            final_response(),
+        ],
+    )
+
+    result = service.run_once(now)
+
+    assert repo.list_push_selections(result.run.id)
+    assert repo.list_push_selections("model_guess") == []
+
+
+def test_model_search_push_selected_candidate_appears_in_current_bundle(tmp_path):
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    expected_run = AgentRun.start(
+        run_type="manual_push",
+        started_at=now,
+        input_summary="manual model-search push",
+        model_provider="deepseek",
+        model_name="deepseek-v4-flash",
+    )
+    candidate = CandidateNews.from_evidence(
+        run_id=expected_run.id,
+        title="AI chip update",
+        url="https://example.com/ai-chip",
+        source_name="Example Tech",
+        summary="A company shipped an AI chip.",
+        published_at=now - timedelta(days=1),
+        score=8.5,
+    )
+    repo, service, _ = make_service(
+        tmp_path,
+        [
+            tool_response("query_preferences", {"task": "push"}),
+            tool_response("search_web", {"query": "AI chip", "max_results": 1}),
+            tool_response(
+                "write_candidate_news",
+                {
+                    "items": [
+                        {
+                            "title": candidate.title,
+                            "url": candidate.url,
+                            "source_name": candidate.source_name,
+                            "summary": candidate.summary,
+                            "published_at": candidate.published_at.isoformat(),
+                            "score": candidate.score,
+                        }
+                    ]
+                },
+            ),
+            tool_response(
+                "select_push_items",
+                {
+                    "items": [
+                        {
+                            "section": "latest",
+                            "candidate_id": candidate.id,
+                            "rank": 1,
+                            "reason": "fresh search evidence",
+                        }
+                    ]
+                },
+            ),
+            final_response(),
+        ],
+    )
+
+    result = service.run_once(now)
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[],
+        ai_service=NewsAIService(settings=AISettings.default(), api_key=None),
+    ).current_bundle(now)
+
+    assert result.run.id == expected_run.id
+    assert [item.title for item in bundle.latest] == ["AI chip update"]
+    assert [item.title for item in bundle.relevant] == ["AI chip update"]
 
 
 def test_model_search_push_fails_when_model_skips_search_tool(tmp_path):

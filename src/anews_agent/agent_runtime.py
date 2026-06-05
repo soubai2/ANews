@@ -42,12 +42,18 @@ class AgentRuntime:
         registry: AgentToolRegistry,
         model: ChatCompletionModel,
         max_tool_calls: int = 16,
+        non_budgeted_tool_names: set[str] | None = None,
+        run_scoped_tool_names: set[str] | None = None,
+        budget_recovery_tool_names: set[str] | None = None,
         now: Any | None = None,
     ) -> None:
         self.repository = repository
         self.registry = registry
         self.model = model
         self.max_tool_calls = max(1, max_tool_calls)
+        self.non_budgeted_tool_names = frozenset(non_budgeted_tool_names or set())
+        self.run_scoped_tool_names = frozenset(run_scoped_tool_names or set())
+        self.budget_recovery_tool_names = frozenset(budget_recovery_tool_names or set())
         self.now = now or (lambda: datetime.now(timezone.utc))
 
     def run(
@@ -73,18 +79,23 @@ class AgentRuntime:
         )
         self.repository.upsert_agent_run(run)
         working_messages = [dict(message) for message in messages]
-        tool_count = 0
+        budgeted_tool_count = 0
+        tool_sequence = 0
+        recovering_from_budget = False
 
         try:
             while True:
                 response = self.model.complete(
                     messages=working_messages,
-                    tools=self.registry.schemas(),
+                    tools=_filter_tool_schemas(
+                        self.registry.schemas(),
+                        self.budget_recovery_tool_names if recovering_from_budget else None,
+                    ),
                 )
                 assistant_message = _assistant_message(response)
-                working_messages.append(assistant_message)
                 tool_calls = assistant_message.get("tool_calls") or []
                 if not tool_calls:
+                    working_messages.append(assistant_message)
                     final_content = str(assistant_message.get("content") or "")
                     completed = replace(
                         run,
@@ -97,11 +108,31 @@ class AgentRuntime:
                         messages=working_messages,
                         final_content=final_content,
                     )
+                budgeted_tool_names = [
+                    _raw_tool_name(raw_call)
+                    for raw_call in tool_calls
+                    if _raw_tool_name(raw_call) not in self.non_budgeted_tool_names
+                ]
+                if budgeted_tool_names and (
+                    budgeted_tool_count + len(budgeted_tool_names) > self.max_tool_calls
+                ):
+                    if self.budget_recovery_tool_names and not recovering_from_budget:
+                        working_messages.append(
+                            _budget_recovery_message(self.budget_recovery_tool_names)
+                        )
+                        recovering_from_budget = True
+                        continue
+                    raise RuntimeError(
+                        "Agent tool call budget exhausted before "
+                        f"{budgeted_tool_names[0] or 'unknown_tool'}"
+                    )
+                working_messages.append(assistant_message)
                 for raw_call in tool_calls:
-                    tool_count += 1
-                    if tool_count > self.max_tool_calls:
-                        raise RuntimeError("Agent tool call budget exhausted")
-                    tool_message = self._execute_tool_call(run.id, tool_count, raw_call)
+                    tool_name = _raw_tool_name(raw_call)
+                    if tool_name not in self.non_budgeted_tool_names:
+                        budgeted_tool_count += 1
+                    tool_sequence += 1
+                    tool_message = self._execute_tool_call(run.id, tool_sequence, raw_call)
                     working_messages.append(tool_message)
         except Exception as error:
             failed = replace(
@@ -121,6 +152,8 @@ class AgentRuntime:
             raise ValueError("Tool call missing function payload")
         tool_name = str(function.get("name") or "")
         arguments = _parse_arguments(function.get("arguments"))
+        if tool_name in self.run_scoped_tool_names:
+            arguments = {**arguments, "run_id": run_id}
         started_at = self.now()
         call_id = str(raw_call.get("id") or f"call_{sequence}")
         running = AgentToolCall.from_call(
@@ -165,6 +198,37 @@ def _assistant_message(response: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(message, dict):
         raise ValueError("Model response missing assistant message")
     return dict(message)
+
+
+def _raw_tool_name(raw_call: dict[str, Any]) -> str:
+    function = raw_call.get("function") if isinstance(raw_call, dict) else None
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "")
+
+
+def _filter_tool_schemas(
+    schemas: list[dict[str, Any]], allowed_names: frozenset[str] | None
+) -> list[dict[str, Any]]:
+    if not allowed_names:
+        return schemas
+    return [
+        schema
+        for schema in schemas
+        if schema.get("function", {}).get("name") in allowed_names
+    ]
+
+
+def _budget_recovery_message(tool_names: frozenset[str]) -> dict[str, str]:
+    names = ", ".join(sorted(tool_names))
+    return {
+        "role": "system",
+        "content": (
+            "The exploration tool budget is exhausted. Do not call search, read, "
+            "or context-query tools again. Use the existing evidence and call only "
+            f"these finalization tools now: {names}."
+        ),
+    }
 
 
 def _parse_arguments(value: object) -> dict[str, Any]:

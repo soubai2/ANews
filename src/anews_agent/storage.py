@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,16 @@ def load_payload(value: str | None) -> dict[str, Any]:
         return {}
     loaded = json.loads(value)
     return loaded if isinstance(loaded, dict) else {}
+
+
+_FTS_TOKEN_RE = re.compile(r"[\w]+", re.UNICODE)
+
+
+def _safe_fts_query(value: str) -> str:
+    tokens = _FTS_TOKEN_RE.findall(value)
+    if not tokens:
+        return ""
+    return " OR ".join(f'"{token}"' for token in tokens[:12])
 
 
 def to_utc_iso(value: datetime) -> str:
@@ -1111,18 +1122,24 @@ class NewsRepository:
         clean_query = query.strip()
         if not clean_query:
             return self.list_preference_facts()[:limit]
+        fts_query = _safe_fts_query(clean_query)
+        if not fts_query:
+            return self.list_preference_facts()[:limit]
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT pf.*
-                FROM preference_facts_fts fts
-                JOIN preference_facts pf ON pf.id = fts.id
-                WHERE preference_facts_fts MATCH ?
-                ORDER BY pf.weight DESC, pf.kind, pf.value
-                LIMIT ?
-                """,
-                (clean_query, max(1, min(limit, 100))),
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT pf.*
+                    FROM preference_facts_fts fts
+                    JOIN preference_facts pf ON pf.id = fts.id
+                    WHERE preference_facts_fts MATCH ?
+                    ORDER BY pf.weight DESC, pf.kind, pf.value
+                    LIMIT ?
+                    """,
+                    (fts_query, max(1, min(limit, 100))),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return self.list_preference_facts()[:limit]
         return [self._row_to_preference_fact(row) for row in rows]
 
     def upsert_preference_summary(self, summary: PreferenceSummary) -> None:

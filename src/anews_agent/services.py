@@ -217,7 +217,15 @@ class NewsPushService:
         )
 
     def current_bundle(self, now: datetime) -> PushBundle:
-        news_items = self.repository.list_news_for_day(now.date())
+        latest_by_id = {
+            news_id: item
+            for news_id in self.repository.get_last_push_news_ids()
+            for item in [self.repository.get_news(news_id)]
+            if item is not None
+        }
+        news_by_id = {item.id: item for item in self.repository.list_news_for_day(now.date())}
+        news_by_id.update(latest_by_id)
+        news_items = list(news_by_id.values())
         follow_update_ids = {item.id for item in self._select_follow_updates(news_items)}
         marked_items = [
             replace(item, is_follow_update=True) if item.id in follow_update_ids else item
@@ -226,7 +234,7 @@ class NewsPushService:
         marked_by_id = {item.id: item for item in marked_items}
         latest_items = [
             marked_by_id[news_id]
-            for news_id in self.repository.get_last_push_news_ids()
+            for news_id in latest_by_id
             if news_id in marked_by_id
         ]
         last_push_at = self.repository.get_last_push_at()

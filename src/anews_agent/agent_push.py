@@ -16,6 +16,8 @@ from anews_agent.storage import NewsRepository
 
 REQUIRED_FIRST_TOOL = "query_preferences"
 SEARCH_TOOL_NAMES = {"search_web", "search_user_sources", "read_url"}
+PUSH_NON_BUDGETED_TOOL_NAMES = {"write_candidate_news", "select_push_items"}
+PUSH_RUN_SCOPED_TOOL_NAMES = {"write_candidate_news", "select_push_items"}
 
 
 @dataclass(frozen=True)
@@ -136,7 +138,12 @@ class ModelSearchPushService:
                 "content": (
                     "You are the ANews model-search push agent. Every real push must first "
                     "call query_preferences, then call search_web/search_user_sources/read_url, "
-                    "then call select_push_items. Do not invent source URLs."
+                    "then call select_push_items. Do not invent source URLs. Hard tool budget: "
+                    "call query_preferences once, use at most 3 search calls total, read at most "
+                    "4 unique URLs, never read the same URL twice, and prefer search result "
+                    "snippets when they contain enough evidence. After gathering enough evidence, "
+                    "call write_candidate_news when you have candidates, call select_push_items "
+                    "before final answer, then stop using tools."
                 ),
             },
             {
@@ -203,6 +210,9 @@ def build_model_search_push_service(
             registry=registry,
             model=DeepSeekChatCompletionModel(provider),
             max_tool_calls=config.agent_max_tool_calls,
+            non_budgeted_tool_names=PUSH_NON_BUDGETED_TOOL_NAMES,
+            run_scoped_tool_names=PUSH_RUN_SCOPED_TOOL_NAMES,
+            budget_recovery_tool_names=PUSH_RUN_SCOPED_TOOL_NAMES,
             now=now,
         )
     return ModelSearchPushService(

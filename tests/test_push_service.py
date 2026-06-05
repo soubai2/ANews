@@ -503,6 +503,30 @@ def test_current_bundle_uses_last_run_latest_and_sorts_relevant_by_score(tmp_pat
     assert [news.id for news in bundle.relevant] == [older_high.id, newer_low.id]
 
 
+def test_current_bundle_includes_last_run_latest_from_previous_day(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 10, 0, tzinfo=timezone.utc)
+    source = Source.from_url(name="Example Tech", url="mock://example", source_type="mock")
+    previous_day_item = make_news(
+        "Previous day selected",
+        "https://example.com/previous",
+        now - timedelta(days=1),
+        source,
+        4.0,
+    )
+    repo.upsert_news(previous_day_item)
+    repo.set_last_push_news_ids([previous_day_item.id])
+
+    bundle = NewsPushService(
+        repository=repo,
+        source_adapters=[],
+        ai_service=make_ai_service(),
+    ).current_bundle(now)
+
+    assert [news.id for news in bundle.latest] == [previous_day_item.id]
+    assert [news.id for news in bundle.relevant] == [previous_day_item.id]
+
+
 def test_current_bundle_has_empty_latest_without_last_run_state(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     now = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)

@@ -31,6 +31,20 @@ def runtime_with_registry(tmp_path, responses, max_tool_calls=4):
             handler=lambda args: {"echo": args.get("value", "")},
         )
     )
+    registry.register(
+        AgentTool(
+            name="finalize",
+            description="Persist final output",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+            },
+            handler=lambda args: {"run_id": args.get("run_id", ""), "value": args.get("value", "")},
+        )
+    )
     now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
     ticks = {"count": 0}
 
@@ -125,6 +139,113 @@ def test_runtime_enforces_tool_budget(tmp_path):
         runtime.run(run_type="manual_push", messages=[{"role": "user", "content": "x"}])
 
     assert repo.list_agent_runs()[0].status == "failed"
+
+
+def test_runtime_allows_non_budgeted_final_tool_after_budget_is_spent(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="search",
+            description="Search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"value": args.get("value", "")},
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="finalize",
+            description="Persist final selection",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+            },
+            handler=lambda args: {"run_id": args.get("run_id", ""), "value": args.get("value", "")},
+        )
+    )
+    runtime = AgentRuntime(
+        repository=repo,
+        registry=registry,
+        model=FakeModel(
+            [
+                tool_response("search", {"value": "evidence"}),
+                tool_response("finalize", {"run_id": "model_guess", "value": "selected"}),
+                final_response("done"),
+            ]
+        ),
+        max_tool_calls=1,
+        non_budgeted_tool_names={"finalize"},
+        run_scoped_tool_names={"finalize"},
+    )
+
+    result = runtime.run(run_type="manual_push", messages=[{"role": "user", "content": "x"}])
+    calls = repo.list_agent_tool_calls(result.run.id)
+
+    assert result.run.status == "success"
+    assert [call.tool_name for call in calls] == ["search", "finalize"]
+    assert calls[1].arguments["run_id"] == result.run.id
+    assert calls[1].result["run_id"] == result.run.id
+
+
+def test_runtime_recovers_to_final_tools_when_exploration_budget_is_exhausted(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="search",
+            description="Search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"value": args.get("value", "")},
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="finalize",
+            description="Persist final selection",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "value": {"type": "string"},
+                },
+            },
+            handler=lambda args: {"run_id": args.get("run_id", ""), "value": args.get("value", "")},
+        )
+    )
+    model = FakeModel(
+        [
+            tool_response("search", {"value": "first"}),
+            tool_response("search", {"value": "extra"}),
+            tool_response("finalize", {"run_id": "model_guess", "value": "selected"}),
+            final_response("done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        repository=repo,
+        registry=registry,
+        model=model,
+        max_tool_calls=1,
+        non_budgeted_tool_names={"finalize"},
+        run_scoped_tool_names={"finalize"},
+        budget_recovery_tool_names={"finalize"},
+    )
+
+    result = runtime.run(run_type="manual_push", messages=[{"role": "user", "content": "x"}])
+    calls = repo.list_agent_tool_calls(result.run.id)
+    recovery_tool_names = {schema["function"]["name"] for schema in model.requests[2]["tools"]}
+
+    assert result.run.status == "success"
+    assert [call.tool_name for call in calls] == ["search", "finalize"]
+    assert recovery_tool_names == {"finalize"}
+    assert any(
+        "budget is exhausted" in content
+        for message in model.requests[2]["messages"]
+        for content in [message.get("content")]
+        if isinstance(content, str)
+    )
 
 
 def test_runtime_rejects_malformed_tool_arguments(tmp_path):

@@ -43,6 +43,23 @@ def test_preference_kb_returns_negative_preferences_when_task_matches(tmp_path):
     ]
 
 
+def test_preference_kb_accepts_natural_language_task_with_punctuation(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    kb = PreferenceKnowledgeBase(repo)
+
+    kb.update_preferences(
+        [{"kind": "topic", "value": "AI chips"}],
+        now=datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc),
+    )
+
+    result = kb.query_preferences(
+        "Get user preferences, sources, and followed stories for news push"
+    )
+
+    assert result["summary"]
+    assert "facts" in result
+
+
 def test_preference_kb_includes_legacy_preferences_sources_and_follows(tmp_path):
     repo = NewsRepository(tmp_path / "anews.db")
     now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)

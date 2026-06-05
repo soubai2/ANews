@@ -77,11 +77,6 @@ function formatError(error) {
   return "请求失败";
 }
 
-function extractSourceUrl(text) {
-  const match = text.match(/\b(https?:\/\/\S+|mock:\/\/\S+)/i);
-  return match?.[1]?.replace(/[，。,.]+$/, "") || "";
-}
-
 function providerStateLabel(statusValue) {
   if (!statusValue) return "未知";
   if (statusValue.available && !statusValue.degraded) return "可用";
@@ -191,7 +186,10 @@ export function App() {
     url: "",
     source_type: "news",
   });
-  const [command, setCommand] = useState("");
+  const [chatInput, setChatInput] = useState("");
+  const [chatSessionId, setChatSessionId] = useState("");
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatBusy, setChatBusy] = useState(false);
   const detailRequestRef = useRef(0);
 
   async function refreshAll() {
@@ -297,53 +295,30 @@ export function App() {
     }
   }
 
-  async function runCommand(event) {
+  async function sendChatMessage(event) {
     event.preventDefault();
-    const text = command.trim();
+    const text = chatInput.trim();
     if (!text) return;
 
-    setStatus("正在处理指令");
+    setChatBusy(true);
+    setStatus("正在与模型对话");
     try {
-      const sourceUrl = extractSourceUrl(text);
-      if (sourceUrl && /(添加|来源|source|add)/i.test(text)) {
-        await api.addSource({
-          name: sourceUrl.startsWith("mock://") ? "对话添加模拟来源" : "对话添加来源",
-          url: sourceUrl,
-          source_type: sourceUrl.startsWith("mock://") ? "mock" : "news",
-          user_specified: true,
-        });
-        setActive("sources");
-        setCommand("");
-        await refreshAll();
-        return;
+      let sessionId = chatSessionId;
+      if (!sessionId) {
+        const session = await api.createChatSession({ title: text.slice(0, 24) || "新闻对话" });
+        sessionId = session.id;
+        setChatSessionId(sessionId);
       }
-
-      if (text.toLowerCase().includes("mock")) {
-        await api.addSource({
-          name: "对话添加模拟来源",
-          url: `mock://dialog-${Date.now()}`,
-          source_type: "mock",
-          user_specified: true,
-        });
-        setActive("sources");
-        setCommand("");
-        await refreshAll();
-        return;
-      }
-
-      const results = await api.listNews(text);
-      setBundle((current) =>
-        normalizeBundle({
-          ...current,
-          latest: asArray(results),
-          relevant: asArray(results),
-        }),
-      );
-      setActive("push");
-      setCommand("");
-      setStatus(`查询返回 ${asArray(results).length} 条新闻`);
+      setChatInput("");
+      const response = await api.sendChatMessage(sessionId, { content: text });
+      setChatMessages(asArray(response.messages));
+      setLastAgentRun(response.agent_run || null);
+      const reason = response.agent_run?.degradation_reason;
+      setStatus(reason ? `对话降级：${reason}` : "对话已返回");
     } catch (error) {
-      setStatus(`指令失败：${formatError(error)}`);
+      setStatus(`对话失败：${formatError(error)}`);
+    } finally {
+      setChatBusy(false);
     }
   }
 
@@ -488,18 +463,36 @@ export function App() {
         {active === "dialog" && (
           <section className="panel">
             <header className="panel__header">
-              <h2>Agent 控制台</h2>
-              <span>查询、添加来源或立即推送</span>
+              <h2>Agent 对话</h2>
+              <span>{chatSessionId ? "会话已创建" : "新会话"}</span>
             </header>
-            <form className="command-form" onSubmit={runCommand}>
+            <div className="chat-list">
+              {chatMessages.length === 0 ? (
+                <div className="empty">暂无对话消息</div>
+              ) : (
+                chatMessages.map((message) => (
+                  <div className={`chat-message chat-message--${message.role}`} key={message.id}>
+                    <span>{message.role === "user" ? "你" : "ANews"}</span>
+                    <p>{message.content}</p>
+                  </div>
+                ))
+              )}
+              {chatBusy && (
+                <div className="chat-message chat-message--assistant">
+                  <span>ANews</span>
+                  <p>正在查询偏好、搜索或整理回答...</p>
+                </div>
+              )}
+            </div>
+            <form className="command-form" onSubmit={sendChatMessage}>
               <input
-                value={command}
-                onChange={(event) => setCommand(event.target.value)}
-                placeholder="例如：AI 芯片新闻，或 添加来源 mock://tech"
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="例如：今天有哪些 AI 芯片新闻？"
               />
-              <button type="submit">
+              <button type="submit" disabled={chatBusy}>
                 <Bot size={16} />
-                <span>执行</span>
+                <span>{chatBusy ? "处理中" : "发送"}</span>
               </button>
             </form>
             <div className="hint-row">
@@ -510,11 +503,13 @@ export function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setCommand("添加来源 mock://tech");
+                  setChatSessionId("");
+                  setChatMessages([]);
+                  setChatInput("");
                 }}
               >
                 <Plus size={16} />
-                <span>填入模拟来源</span>
+                <span>新会话</span>
               </button>
             </div>
           </section>

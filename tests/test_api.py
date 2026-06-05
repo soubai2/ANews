@@ -87,6 +87,25 @@ def test_agent_push_without_deepseek_key_returns_visible_failed_run_and_trace(tm
     assert trace_response.json()["tool_calls"] == []
 
 
+def test_chat_api_persists_messages_and_surfaces_deepseek_degradation(tmp_path):
+    client = make_client(tmp_path)
+
+    session = client.post("/api/chat/sessions", json={"title": "AI 新闻"}).json()
+    response = client.post(
+        f"/api/chat/sessions/{session['id']}/messages",
+        json={"content": "今天 AI 芯片有什么新闻？"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["agent_run"]["status"] == "failed"
+    assert payload["agent_run"]["degradation_reason"] == "deepseek_api_key_missing"
+    assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
+    assert "DeepSeek 当前不可用" in payload["messages"][1]["content"]
+    stored = client.get(f"/api/chat/sessions/{session['id']}").json()
+    assert len(stored["messages"]) == 2
+
+
 def test_get_missing_news_returns_404(tmp_path):
     client = make_client(tmp_path)
 

@@ -15,6 +15,7 @@ from anews_agent.agent_push import (
     build_model_search_push_service,
 )
 from anews_agent.ai import NewsAIService
+from anews_agent.chat import build_chat_service
 from anews_agent.config import AppConfig
 from anews_agent.domain import AISettings, Source, SourceType
 from anews_agent.scheduler import create_push_scheduler
@@ -46,6 +47,14 @@ class AISettingsPatchRequest(BaseModel):
     base_url: str | None = None
     enabled: bool | None = None
     fallback_enabled: bool | None = None
+
+
+class ChatSessionCreateRequest(BaseModel):
+    title: str = "新闻对话"
+
+
+class ChatMessageCreateRequest(BaseModel):
+    content: str
 
 
 def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = False) -> FastAPI:
@@ -129,6 +138,42 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
     @app.get("/api/news")
     def search_news(q: str = "") -> Any:
         return serialize(repository.search_news(q))
+
+    @app.post("/api/chat/sessions")
+    def create_chat_session(payload: ChatSessionCreateRequest) -> Any:
+        service = build_chat_service(
+            repository,
+            resolved_config,
+            now=_utc_now,
+        )
+        return serialize(service.create_session(payload.title))
+
+    @app.get("/api/chat/sessions")
+    def list_chat_sessions() -> Any:
+        return serialize(repository.list_chat_sessions())
+
+    @app.get("/api/chat/sessions/{session_id}")
+    def get_chat_session(session_id: str) -> Any:
+        for session in repository.list_chat_sessions():
+            if session.id == session_id:
+                return {
+                    "session": serialize(session),
+                    "messages": serialize(repository.list_chat_messages(session_id)),
+                }
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    @app.post("/api/chat/sessions/{session_id}/messages")
+    def send_chat_message(session_id: str, payload: ChatMessageCreateRequest) -> Any:
+        service = build_chat_service(
+            repository,
+            resolved_config,
+            now=_utc_now,
+        )
+        try:
+            result = service.send_message(session_id, payload.content)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return serialize(result)
 
     @app.get("/api/agent/runs/{run_id}")
     def get_agent_run(run_id: str) -> Any:

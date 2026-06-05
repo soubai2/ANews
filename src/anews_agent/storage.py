@@ -726,7 +726,15 @@ class NewsRepository:
                 """
                 SELECT * FROM chat_messages
                 WHERE session_id = ?
-                ORDER BY created_at ASC, id ASC
+                ORDER BY created_at ASC,
+                    CASE role
+                        WHEN 'system' THEN 0
+                        WHEN 'user' THEN 1
+                        WHEN 'assistant' THEN 2
+                        WHEN 'tool' THEN 3
+                        ELSE 4
+                    END,
+                    id ASC
                 """,
                 (session_id,),
             ).fetchall()

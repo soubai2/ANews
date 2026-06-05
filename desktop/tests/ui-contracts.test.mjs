@@ -61,3 +61,15 @@ test("manual push uses agent push endpoint and surfaces degradation", () => {
   assert.match(app, /模型推送失败/);
   assert.match(app, /degradation_reason/);
 });
+
+test("dialog page uses persisted chat api instead of local command parser", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const api = readDesktopFile("src/api.js");
+
+  assert.match(api, /createChatSession/);
+  assert.match(api, /sendChatMessage/);
+  assert.match(app, /api\.sendChatMessage/);
+  assert.match(app, /chatMessages/);
+  assert.match(app, /对话降级/);
+  assert.doesNotMatch(app, /api\.listNews\(text\)/);
+});

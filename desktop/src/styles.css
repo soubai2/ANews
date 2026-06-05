@@ -377,6 +377,53 @@ select {
   grid-template-columns: minmax(240px, 1fr) auto;
 }
 
+.chat-list {
+  border: 1px solid #d8dde4;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 2px;
+  max-height: 420px;
+  min-height: 180px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 4px;
+  max-width: 78%;
+}
+
+.chat-message span {
+  color: #687385;
+  font-size: 12px;
+}
+
+.chat-message p {
+  border: 1px solid #d8dde4;
+  border-radius: 8px;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.chat-message--user {
+  justify-self: end;
+}
+
+.chat-message--user p {
+  background: #eaf1ff;
+  border-color: #bbcef6;
+}
+
+.chat-message--assistant {
+  justify-self: start;
+}
+
+.chat-message--assistant p {
+  background: #ffffff;
+}
+
 .source-form {
   grid-template-columns: minmax(140px, 180px) minmax(260px, 1fr) minmax(110px, 140px) auto;
 }

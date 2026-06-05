@@ -137,11 +137,11 @@
 - Test: `tests/test_chat.py`
 - Test: `desktop/tests/ui-contracts.test.mjs`
 
-- [ ] Add chat session and message APIs.
-- [ ] Implement chat Agent prompt for news questions, source management, follow-up requests and preference edits.
-- [ ] Let chat Agent call the same search/read/preference tools used by push.
+- [x] Add chat session and message APIs.
+- [x] Implement chat Agent prompt for news questions, source management, follow-up requests and preference edits.
+- [x] Let chat Agent call the same search/read/preference tools used by push.
 - [ ] Return assistant message with citations and follow-up actions.
-- [ ] Persist full chat history.
+- [x] Persist full chat history.
 - [ ] Expose run events through polling endpoint first; SSE can be added after stable contracts.
 - [ ] Add tests proving chat search performs tool calls and returns cited answers.
 
@@ -158,7 +158,7 @@
 - [ ] Change button labels and icons to clearly show `已关注` and `已跟进`.
 - [ ] Add card-local error feedback for failed actions.
 - [ ] Add Agent run progress panel for push refresh.
-- [ ] Replace command box with chat transcript.
+- [x] Replace command box with chat transcript.
 - [ ] Show assistant messages, user messages, tool progress and cited source cards.
 - [ ] Add UI contract tests for followed/focused button states and chat event rendering.
 

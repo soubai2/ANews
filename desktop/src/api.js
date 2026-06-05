@@ -34,6 +34,14 @@ export const api = {
   getAgentRunTrace: (id) => request(`/api/agent/runs/${id}/trace`),
   listNews: (query = "") => request(`/api/news?q=${encodeURIComponent(query)}`),
   getNews: (id) => request(`/api/news/${id}`),
+  createChatSession: (payload) =>
+    request("/api/chat/sessions", { method: "POST", body: JSON.stringify(payload) }),
+  getChatSession: (id) => request(`/api/chat/sessions/${id}`),
+  sendChatMessage: (id, payload) =>
+    request(`/api/chat/sessions/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   focusNews: (id) => request(`/api/news/${id}/focus`, { method: "POST" }),
   followNews: (id) => request(`/api/news/${id}/follow`, { method: "POST" }),
   listSources: () => request("/api/sources"),

@@ -12,3 +12,4 @@ node_modules/
 dist/
 .anews.env
 docs/
+.tmp_electron_screen.png

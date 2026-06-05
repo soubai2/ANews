@@ -8,7 +8,7 @@ from anews_agent.agent_runtime import AgentRuntime, DeepSeekChatCompletionModel
 from anews_agent.agent_tools import build_default_tool_registry
 from anews_agent.ai import DeepSeekProvider
 from anews_agent.config import AppConfig
-from anews_agent.domain import AISettings, AgentRun, ChatMessage, ChatSession
+from anews_agent.domain import AISettings, AgentRun, AgentToolCall, ChatMessage, ChatSession
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import BasicWebReader, SearchService, build_search_provider
 from anews_agent.storage import NewsRepository
@@ -19,6 +19,11 @@ class ChatServiceResult:
     session: ChatSession
     messages: list[ChatMessage]
     agent_run: AgentRun | None = None
+    actions: dict[str, Any] | None = None
+
+
+CHAT_NON_BUDGETED_TOOL_NAMES = {"write_candidate_news", "select_push_items"}
+CHAT_RUN_SCOPED_TOOL_NAMES = {"write_candidate_news", "select_push_items"}
 
 
 class ChatService:
@@ -63,6 +68,7 @@ class ChatService:
                 session=updated_session,
                 messages=self.repository.list_chat_messages(session.id),
                 agent_run=run,
+                actions=_empty_actions(),
             )
 
         runtime_result = self.runtime.run(
@@ -86,6 +92,9 @@ class ChatService:
             session=updated_session,
             messages=self.repository.list_chat_messages(session.id),
             agent_run=runtime_result.run,
+            actions=_summarize_agent_actions(
+                self.repository.list_agent_tool_calls(runtime_result.run.id)
+            ),
         )
 
     def _get_session(self, session_id: str) -> ChatSession:
@@ -134,7 +143,12 @@ class ChatService:
                 "role": "system",
                 "content": (
                     "You are the ANews chat agent. Use tools for fresh news, source reading, "
-                    "preference lookup, preference updates, and follow requests. Cite URLs."
+                    "preference lookup, preference updates, and follow requests. Cite URLs. "
+                    "For every conversation turn, call query_preferences before answering. "
+                    "If the user states a lasting interest, dislike, source preference, or "
+                    "ranking preference, call update_preferences. If the user asks for current "
+                    "news, search the web, write candidate news, and call select_push_items so "
+                    "the result enters the news pool and push page. Use Markdown in the final answer."
                 ),
             }
         ]
@@ -178,6 +192,9 @@ def build_chat_service(
             registry=registry,
             model=DeepSeekChatCompletionModel(provider),
             max_tool_calls=config.agent_max_tool_calls,
+            non_budgeted_tool_names=CHAT_NON_BUDGETED_TOOL_NAMES,
+            run_scoped_tool_names=CHAT_RUN_SCOPED_TOOL_NAMES,
+            budget_recovery_tool_names=CHAT_RUN_SCOPED_TOOL_NAMES,
             now=now,
         )
     return ChatService(
@@ -187,3 +204,35 @@ def build_chat_service(
         api_key=config.deepseek_api_key,
         now=now,
     )
+
+
+def _empty_actions() -> dict[str, Any]:
+    return {
+        "preferences_updated": 0,
+        "candidates_written": 0,
+        "push_news_count": 0,
+        "news_ids": [],
+        "tool_names": [],
+    }
+
+
+def _summarize_agent_actions(tool_calls: list[AgentToolCall]) -> dict[str, Any]:
+    actions = _empty_actions()
+    news_ids: list[str] = []
+    tool_names: list[str] = []
+    for call in tool_calls:
+        if call.status != "success":
+            continue
+        tool_names.append(call.tool_name)
+        if call.tool_name == "update_preferences":
+            actions["preferences_updated"] += len(call.result.get("updated", []))
+        elif call.tool_name == "write_candidate_news":
+            actions["candidates_written"] += len(call.result.get("stored_candidate_ids", []))
+        elif call.tool_name == "select_push_items":
+            for news_id in call.result.get("news_ids", []):
+                if isinstance(news_id, str) and news_id and news_id not in news_ids:
+                    news_ids.append(news_id)
+    actions["news_ids"] = news_ids
+    actions["push_news_count"] = len(news_ids)
+    actions["tool_names"] = tool_names
+    return actions

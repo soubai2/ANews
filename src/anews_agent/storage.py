@@ -461,6 +461,10 @@ class NewsRepository:
             row = conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
         return self._row_to_source(row) if row is not None else None
 
+    def delete_source(self, source_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+
     def mark_source_success(self, source_id: str, when: datetime) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -531,6 +535,10 @@ class NewsRepository:
         with self._connect() as conn:
             conn.execute("DELETE FROM preferences WHERE id = ?", (preference_id,))
 
+    def delete_preferences_created_from(self, created_from: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM preferences WHERE created_from = ?", (created_from,))
+
     def follow_news(self, news_id: str, now: datetime) -> FollowedStory:
         news = self.get_news(news_id)
         if news is None:
@@ -574,6 +582,19 @@ class NewsRepository:
             ).fetchall()
         return [self._row_to_follow(row) for row in rows]
 
+    def get_active_follow_for_news(self, news_id: str) -> FollowedStory | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM followed_stories
+                WHERE news_id = ? AND status = 'active'
+                ORDER BY created_at DESC, title
+                LIMIT 1
+                """,
+                (news_id,),
+            ).fetchone()
+        return self._row_to_follow(row) if row is not None else None
+
     def cancel_follow(self, follow_id: str, now: datetime | None = None) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -583,6 +604,17 @@ class NewsRepository:
                 WHERE id = ?
                 """,
                 (_dump_dt(now), follow_id),
+            )
+
+    def cancel_follow_for_news(self, news_id: str, now: datetime | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE followed_stories
+                SET status = 'cancelled', updated_at = COALESCE(?, updated_at)
+                WHERE news_id = ? AND status = 'active'
+                """,
+                (_dump_dt(now), news_id),
             )
 
     def get_ai_settings(self) -> AISettings:

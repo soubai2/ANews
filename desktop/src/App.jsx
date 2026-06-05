@@ -66,6 +66,12 @@ function updateBundleNewsState(bundle, id, patch) {
   });
 }
 
+function findBundleNews(bundle, id) {
+  return [...asArray(bundle.latest), ...asArray(bundle.relevant), ...asArray(bundle.follow_updates)].find(
+    (item) => item.id === id,
+  );
+}
+
 function formatTime(value) {
   if (!value) return "尚未运行";
   const date = new Date(value);
@@ -81,6 +87,22 @@ function formatTime(value) {
 function formatScore(value) {
   const score = Number(value);
   return Number.isFinite(score) ? score.toFixed(1) : "0.0";
+}
+
+function importanceLabel(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score) || score <= 0) return "待评分";
+  if (score >= 8) return `高 ${score.toFixed(1)}`;
+  if (score >= 4) return `中 ${score.toFixed(1)}`;
+  return `低 ${score.toFixed(1)}`;
+}
+
+function importanceScoreClass(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score) || score <= 0) return "score score--muted";
+  if (score >= 8) return "score score--high";
+  if (score >= 4) return "score score--medium";
+  return "score score--low";
 }
 
 function formatError(error) {
@@ -102,6 +124,72 @@ function providerStateClass(statusValue) {
   return "status-pill status-pill--muted";
 }
 
+function renderInlineMarkdown(text) {
+  const nodes = [];
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+    const token = match[0];
+    if (token.startsWith("**")) {
+      nodes.push(<strong key={`${match.index}-strong`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("`")) {
+      nodes.push(<code key={`${match.index}-code`}>{token.slice(1, -1)}</code>);
+    } else {
+      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      nodes.push(
+        <a href={link?.[2] || "#"} key={`${match.index}-link`} rel="noreferrer" target="_blank">
+          {link?.[1] || token}
+        </a>,
+      );
+    }
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
+function renderMarkdownMessage(content) {
+  const lines = String(content || "").split(/\r?\n/);
+  const blocks = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (line.startsWith("### ")) {
+      blocks.push(<h3 key={index}>{renderInlineMarkdown(line.slice(4))}</h3>);
+    } else if (line.startsWith("## ")) {
+      blocks.push(<h3 key={index}>{renderInlineMarkdown(line.slice(3))}</h3>);
+    } else if (line.startsWith("# ")) {
+      blocks.push(<h3 key={index}>{renderInlineMarkdown(line.slice(2))}</h3>);
+    } else if (/^\s*[-*]\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
+        index += 1;
+      }
+      index -= 1;
+      blocks.push(
+        <ul key={index}>
+          {items.map((item, itemIndex) => (
+            <li key={`${index}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ul>,
+      );
+    } else {
+      blocks.push(<p key={index}>{renderInlineMarkdown(line)}</p>);
+    }
+  }
+  return blocks.length ? blocks : [<p key="empty">暂无内容</p>];
+}
+
+function summarizeChatActions(actions) {
+  const parts = [];
+  if (actions?.preferences_updated) parts.push(`偏好 +${actions.preferences_updated}`);
+  if (actions?.push_news_count) parts.push(`推送 +${actions.push_news_count}`);
+  if (actions?.candidates_written) parts.push(`候选 +${actions.candidates_written}`);
+  return parts;
+}
+
 function NewsCard({ item, onFocus, onFollow, onOpen }) {
   const tags = asArray(item.tags).slice(0, 4);
   const reasons = asArray(item.recommendation_reasons).slice(0, 2);
@@ -114,7 +202,9 @@ function NewsCard({ item, onFocus, onFollow, onOpen }) {
         <span className="truncate">{item.source_name || "未知来源"}</span>
         <span>{formatTime(item.published_at)}</span>
         <span>{item.category || "general"}</span>
-        <span className="score">重要性 {formatScore(item.importance_score)}</span>
+        <span className={importanceScoreClass(item.importance_score)}>
+          重要性 {importanceLabel(item.importance_score)}
+        </span>
       </div>
       <h3>{item.title || "未命名新闻"}</h3>
       <p>{item.summary || "暂无摘要。"}</p>
@@ -141,7 +231,7 @@ function NewsCard({ item, onFocus, onFollow, onOpen }) {
           className={isFocused ? "selected" : ""}
           type="button"
           onClick={() => onFocus(item.id)}
-          title={isFocused ? "已加入长期关注" : "加入长期关注"}
+          title={isFocused ? "取消长期关注" : "加入长期关注"}
         >
           <Heart fill={isFocused ? "currentColor" : "none"} size={16} />
           <span>{isFocused ? "已关注" : "关注"}</span>
@@ -150,7 +240,7 @@ function NewsCard({ item, onFocus, onFollow, onOpen }) {
           className={isFollowed ? "selected" : ""}
           type="button"
           onClick={() => onFollow(item.id)}
-          title={isFollowed ? "已跟进后续变化" : "跟进后续变化"}
+          title={isFollowed ? "取消跟进" : "跟进后续变化"}
         >
           <Star fill={isFollowed ? "currentColor" : "none"} size={16} />
           <span>{isFollowed ? "已跟进" : "跟进"}</span>
@@ -210,21 +300,24 @@ export function App() {
     source_type: "news",
   });
   const [chatInput, setChatInput] = useState("");
+  const [chatSessions, setChatSessions] = useState([]);
   const [chatSessionId, setChatSessionId] = useState("");
   const [chatMessages, setChatMessages] = useState([]);
+  const [chatActions, setChatActions] = useState(null);
   const [chatBusy, setChatBusy] = useState(false);
   const detailRequestRef = useRef(0);
 
   async function refreshAll() {
     try {
       await api.health();
-      const [push, sourceList, preferenceList, followList, ai, search] = await Promise.all([
+      const [push, sourceList, preferenceList, followList, ai, search, sessionList] = await Promise.all([
         api.getPush(),
         api.listSources(),
         api.listPreferences(),
         api.listFollows(),
         api.aiStatus(),
         api.searchStatus(),
+        api.listChatSessions(),
       ]);
       setBundle(normalizeBundle(push));
       setSources(asArray(sourceList));
@@ -232,6 +325,7 @@ export function App() {
       setFollows(asArray(followList));
       setAiStatus(ai || null);
       setSearchStatus(search || null);
+      setChatSessions(asArray(sessionList));
       setStatus("已连接");
     } catch (error) {
       setStatus(`后端不可用：${formatError(error)}`);
@@ -252,27 +346,35 @@ export function App() {
     }
   }
 
-  async function focusNews(id) {
+  async function toggleFocusNews(id) {
     if (!id) return;
-    setStatus("正在更新偏好");
-    setBundle((current) => updateBundleNewsState(current, id, { is_focused: true }));
+    const currentItem = findBundleNews(bundle, id);
+    const isFocused = Boolean(currentItem?.is_focused);
+    const nextFocused = isFocused ? false : true;
+    setStatus(nextFocused ? "正在加入关注" : "正在取消关注");
+    setBundle((current) => updateBundleNewsState(current, id, { is_focused: nextFocused }));
     try {
       await api.focusNews(id);
       await refreshAll();
     } catch (error) {
-      setStatus(`关注失败：${formatError(error)}`);
+      setBundle((current) => updateBundleNewsState(current, id, { is_focused: isFocused }));
+      setStatus(`关注更新失败：${formatError(error)}`);
     }
   }
 
-  async function followNews(id) {
+  async function toggleFollowNews(id) {
     if (!id) return;
-    setStatus("正在添加跟进");
-    setBundle((current) => updateBundleNewsState(current, id, { is_followed: true }));
+    const currentItem = findBundleNews(bundle, id);
+    const isFollowed = Boolean(currentItem?.is_followed);
+    const nextFollowed = isFollowed ? false : true;
+    setStatus(nextFollowed ? "正在添加跟进" : "正在取消跟进");
+    setBundle((current) => updateBundleNewsState(current, id, { is_followed: nextFollowed }));
     try {
       await api.followNews(id);
       await refreshAll();
     } catch (error) {
-      setStatus(`跟进失败：${formatError(error)}`);
+      setBundle((current) => updateBundleNewsState(current, id, { is_followed: isFollowed }));
+      setStatus(`跟进更新失败：${formatError(error)}`);
     }
   }
 
@@ -320,6 +422,38 @@ export function App() {
     }
   }
 
+  async function deleteSource(source) {
+    if (!source?.id) return;
+    setStatus("正在删除来源");
+    try {
+      await api.deleteSource(source.id);
+      await refreshAll();
+    } catch (error) {
+      setStatus(`删除来源失败：${formatError(error)}`);
+    }
+  }
+
+  async function loadChatSession(id) {
+    if (!id) return;
+    setStatus("正在加载会话");
+    try {
+      const response = await api.getChatSession(id);
+      setChatSessionId(response.session?.id || id);
+      setChatMessages(asArray(response.messages));
+      setChatActions(null);
+      setStatus("会话已加载");
+    } catch (error) {
+      setStatus(`加载会话失败：${formatError(error)}`);
+    }
+  }
+
+  function createNewChat() {
+    setChatSessionId("");
+    setChatMessages([]);
+    setChatActions(null);
+    setChatInput("");
+  }
+
   async function sendChatMessage(event) {
     event.preventDefault();
     const text = chatInput.trim();
@@ -333,13 +467,23 @@ export function App() {
         const session = await api.createChatSession({ title: text.slice(0, 24) || "新闻对话" });
         sessionId = session.id;
         setChatSessionId(sessionId);
+        setChatSessions((current) => [session, ...asArray(current).filter((item) => item.id !== session.id)]);
       }
       setChatInput("");
       const response = await api.sendChatMessage(sessionId, { content: text });
       setChatMessages(asArray(response.messages));
       setLastAgentRun(response.agent_run || null);
+      setChatActions(response.actions || null);
+      await refreshAll();
       const reason = response.agent_run?.degradation_reason;
-      setStatus(reason ? `对话降级：${reason}` : "对话已返回");
+      const actionParts = summarizeChatActions(response.actions);
+      setStatus(
+        reason
+          ? `对话降级：${reason}`
+          : actionParts.length
+            ? `对话已联动：${actionParts.join(" / ")}`
+            : "对话已返回",
+      );
     } catch (error) {
       setStatus(`对话失败：${formatError(error)}`);
     } finally {
@@ -461,24 +605,24 @@ export function App() {
                 title="最新"
                 items={bundle.latest}
                 empty="暂无本轮新增新闻"
-                onFocus={focusNews}
-                onFollow={followNews}
+                onFocus={toggleFocusNews}
+                onFollow={toggleFollowNews}
                 onOpen={openNews}
               />
               <Section
                 title="相关"
                 items={bundle.relevant}
                 empty="暂无高相关新闻"
-                onFocus={focusNews}
-                onFollow={followNews}
+                onFocus={toggleFocusNews}
+                onFollow={toggleFollowNews}
                 onOpen={openNews}
               />
               <Section
                 title="跟进"
                 items={bundle.follow_updates}
                 empty="暂无跟进更新"
-                onFocus={focusNews}
-                onFollow={followNews}
+                onFocus={toggleFocusNews}
+                onFollow={toggleFollowNews}
                 onOpen={openNews}
               />
             </div>
@@ -486,56 +630,90 @@ export function App() {
         )}
 
         {active === "dialog" && (
-          <section className="panel">
+          <section className="panel panel--wide">
             <header className="panel__header">
               <h2>Agent 对话</h2>
-              <span>{chatSessionId ? "会话已创建" : "新会话"}</span>
+              <span>{chatSessionId ? "上下文会话" : "新会话"}</span>
             </header>
-            <div className="chat-list">
-              {chatMessages.length === 0 ? (
-                <div className="empty">暂无对话消息</div>
-              ) : (
-                chatMessages.map((message) => (
-                  <div className={`chat-message chat-message--${message.role}`} key={message.id}>
-                    <span>{message.role === "user" ? "你" : "ANews"}</span>
-                    <p>{message.content}</p>
-                  </div>
-                ))
-              )}
-              {chatBusy && (
-                <div className="chat-message chat-message--assistant">
-                  <span>ANews</span>
-                  <p>正在查询偏好、搜索或整理回答...</p>
+            <div className="chat-shell">
+              <aside className="chat-sessions" aria-label="历史会话">
+                <button className="chat-sessions__new" type="button" onClick={createNewChat}>
+                  <Plus size={16} />
+                  <span>新会话</span>
+                </button>
+                <div className="chat-session-list">
+                  {chatSessions.length === 0 ? (
+                    <div className="empty empty--compact">暂无历史会话</div>
+                  ) : (
+                    chatSessions.map((session) => (
+                      <button
+                        className={session.id === chatSessionId ? "active" : ""}
+                        key={session.id}
+                        type="button"
+                        onClick={() => loadChatSession(session.id)}
+                      >
+                        <strong>{session.title || "新闻对话"}</strong>
+                        <span>{formatTime(session.updated_at)}</span>
+                      </button>
+                    ))
+                  )}
                 </div>
-              )}
-            </div>
-            <form className="command-form" onSubmit={sendChatMessage}>
-              <input
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder="例如：今天有哪些 AI 芯片新闻？"
-              />
-              <button type="submit" disabled={chatBusy}>
-                <Bot size={16} />
-                <span>{chatBusy ? "处理中" : "发送"}</span>
-              </button>
-            </form>
-            <div className="hint-row">
-              <button type="button" onClick={runPush}>
-                <Play size={16} />
-                <span>立即推送</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setChatSessionId("");
-                  setChatMessages([]);
-                  setChatInput("");
-                }}
-              >
-                <Plus size={16} />
-                <span>新会话</span>
-              </button>
+              </aside>
+              <div className="chat-workspace">
+                <div className="chat-list">
+                  {chatMessages.length === 0 ? (
+                    <div className="empty">暂无对话消息</div>
+                  ) : (
+                    chatMessages.map((message) => (
+                      <div className={`chat-message chat-message--${message.role}`} key={message.id}>
+                        <span>{message.role === "user" ? "你" : "ANews"}</span>
+                        <div className="markdown-body">{renderMarkdownMessage(message.content)}</div>
+                      </div>
+                    ))
+                  )}
+                  {chatBusy && (
+                    <div className="chat-message chat-message--assistant">
+                      <span>ANews</span>
+                      <div className="markdown-body">
+                        <p>正在查询偏好、搜索、写入新闻池或整理回答...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {summarizeChatActions(chatActions).length > 0 && (
+                  <div className="chat-actions">
+                    {summarizeChatActions(chatActions).map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                    {chatActions?.push_news_count > 0 && (
+                      <button type="button" onClick={() => setActive("push")}>
+                        查看推送
+                      </button>
+                    )}
+                  </div>
+                )}
+                <form className="command-form" onSubmit={sendChatMessage}>
+                  <input
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    placeholder="例如：记住我关注 AI 芯片，并查今天相关新闻"
+                  />
+                  <button type="submit" disabled={chatBusy}>
+                    <Bot size={16} />
+                    <span>{chatBusy ? "处理中" : "发送"}</span>
+                  </button>
+                </form>
+                <div className="hint-row">
+                  <button type="button" onClick={runPush}>
+                    <Play size={16} />
+                    <span>立即推送</span>
+                  </button>
+                  <button type="button" onClick={createNewChat}>
+                    <Plus size={16} />
+                    <span>新会话</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         )}
@@ -602,6 +780,14 @@ export function App() {
                       <span>{source.user_specified ? "用户指定" : "默认"}</span>
                       <button type="button" onClick={() => toggleSource(source)}>
                         {source.enabled ? "停用" : "启用"}
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        type="button"
+                        onClick={() => deleteSource(source)}
+                        title="删除来源"
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>

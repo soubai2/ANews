@@ -36,6 +36,7 @@ export const api = {
   getNews: (id) => request(`/api/news/${id}`),
   createChatSession: (payload) =>
     request("/api/chat/sessions", { method: "POST", body: JSON.stringify(payload) }),
+  listChatSessions: () => request("/api/chat/sessions"),
   getChatSession: (id) => request(`/api/chat/sessions/${id}`),
   sendChatMessage: (id, payload) =>
     request(`/api/chat/sessions/${id}/messages`, {
@@ -49,6 +50,7 @@ export const api = {
     request("/api/sources", { method: "POST", body: JSON.stringify(payload) }),
   patchSource: (id, payload) =>
     request(`/api/sources/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteSource: (id) => request(`/api/sources/${id}`, { method: "DELETE" }),
   listPreferences: () => request("/api/preferences"),
   deletePreference: (id) => request(`/api/preferences/${id}`, { method: "DELETE" }),
   listFollows: () => request("/api/follows"),

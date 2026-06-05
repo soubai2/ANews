@@ -85,3 +85,47 @@ test("news cards render focused and followed states", () => {
   assert.match(app, /updateBundleNewsState/);
   assert.match(styles, /\.card-actions button\.selected/);
 });
+
+test("news focus and follow controls are toggle actions", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  assert.match(app, /toggleFocusNews/);
+  assert.match(app, /toggleFollowNews/);
+  assert.match(app, /isFocused \? false : true/);
+  assert.match(app, /isFollowed \? false : true/);
+});
+
+test("sources can be deleted from the UI", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const api = readDesktopFile("src/api.js");
+
+  assert.match(api, /deleteSource: \(id\) => request\(`\/api\/sources\/\$\{id\}`/);
+  assert.match(app, /deleteSource/);
+  assert.match(app, /api\.deleteSource/);
+  assert.match(app, /Trash2/);
+});
+
+test("chat page supports sessions markdown and product actions", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const api = readDesktopFile("src/api.js");
+  const styles = readDesktopFile("src/styles.css");
+
+  assert.match(api, /listChatSessions/);
+  assert.match(api, /getChatSession/);
+  assert.match(app, /chatSessions/);
+  assert.match(app, /loadChatSession/);
+  assert.match(app, /renderMarkdownMessage/);
+  assert.match(app, /chatActions/);
+  assert.match(app, /actions/);
+  assert.match(styles, /\.chat-shell/);
+  assert.match(styles, /\.markdown-body/);
+  assert.match(styles, /\.chat-actions/);
+});
+
+test("importance score has a nonzero readable display path", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  assert.match(app, /importanceLabel/);
+  assert.match(app, /importanceScoreClass/);
+  assert.match(app, /importance_score/);
+});

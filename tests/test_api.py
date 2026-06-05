@@ -198,6 +198,44 @@ def test_patch_source_enabled_updates_listed_source(tmp_path):
     assert stored["enabled"] is False
 
 
+def test_focus_and_follow_news_are_toggle_actions(tmp_path):
+    client = make_client(tmp_path)
+    run_response = client.post("/api/push/run")
+    news_id = run_response.json()["latest"][0]["id"]
+
+    assert client.post(f"/api/news/{news_id}/focus").status_code == 200
+    assert client.post(f"/api/news/{news_id}/follow").status_code == 200
+    active = client.get("/api/push").json()["latest"][0]
+    assert active["is_focused"] is True
+    assert active["is_followed"] is True
+
+    unfocus = client.post(f"/api/news/{news_id}/focus")
+    unfollow = client.post(f"/api/news/{news_id}/follow")
+
+    assert unfocus.status_code == 200
+    assert unfocus.json()["state"]["is_focused"] is False
+    assert unfollow.status_code == 200
+    assert unfollow.json()["state"]["is_followed"] is False
+    inactive = client.get("/api/push").json()["latest"][0]
+    assert inactive["is_focused"] is False
+    assert inactive["is_followed"] is False
+    assert client.get("/api/follows").json() == []
+
+
+def test_delete_source_removes_source_from_list(tmp_path):
+    client = make_client(tmp_path)
+    source = client.post(
+        "/api/sources",
+        json={"name": "Delete Source", "url": "mock://delete", "source_type": "mock"},
+    ).json()
+
+    response = client.delete(f"/api/sources/{source['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert source["id"] not in {item["id"] for item in client.get("/api/sources").json()}
+
+
 def test_push_does_not_create_default_source_when_all_sources_are_disabled(tmp_path):
     client = make_client(tmp_path)
     source = client.post(

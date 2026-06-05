@@ -218,27 +218,59 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
 
     @app.post("/api/news/{news_id}/focus")
     def focus_news(news_id: str) -> Any:
+        timestamp = _utc_now()
+        current_state = repository.get_news_user_state(news_id)
+        if current_state.is_focused:
+            PreferenceService(repository).unfocus_news(news_id)
+            repository.upsert_news_user_state(
+                replace(current_state, is_focused=False, last_action_at=timestamp)
+            )
+            return {
+                "state": serialize(repository.get_news_user_state(news_id)),
+                "preferences": [],
+                "action": "unfocused",
+            }
         try:
-            preferences = PreferenceService(repository).focus_news(news_id, _utc_now())
+            preferences = PreferenceService(repository).focus_news(news_id, timestamp)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         state = repository.get_news_user_state(news_id)
         repository.upsert_news_user_state(
-            replace(state, is_focused=True, last_action_at=_utc_now())
+            replace(state, is_focused=True, last_action_at=timestamp)
         )
-        return serialize(preferences)
+        return {
+            "state": serialize(repository.get_news_user_state(news_id)),
+            "preferences": serialize(preferences),
+            "action": "focused",
+        }
 
     @app.post("/api/news/{news_id}/follow")
     def follow_news(news_id: str) -> Any:
+        timestamp = _utc_now()
+        current_state = repository.get_news_user_state(news_id)
+        if current_state.is_followed:
+            FollowService(repository).cancel_news(news_id, timestamp)
+            repository.upsert_news_user_state(
+                replace(current_state, is_followed=False, last_action_at=timestamp)
+            )
+            return {
+                "state": serialize(repository.get_news_user_state(news_id)),
+                "follow": None,
+                "action": "unfollowed",
+            }
         try:
-            follow = FollowService(repository).follow_news(news_id, _utc_now())
+            follow = FollowService(repository).follow_news(news_id, timestamp)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         state = repository.get_news_user_state(news_id)
         repository.upsert_news_user_state(
-            replace(state, is_followed=True, last_action_at=_utc_now())
+            replace(state, is_followed=True, last_action_at=timestamp)
         )
-        return serialize(follow)
+        return {
+            "state": serialize(repository.get_news_user_state(news_id)),
+            "follow": serialize(follow),
+            "action": "followed",
+        }
 
     @app.get("/api/preferences")
     def list_preferences() -> Any:
@@ -270,6 +302,14 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return serialize(source)
+
+    @app.delete("/api/sources/{source_id}")
+    def delete_source(source_id: str) -> dict[str, bool]:
+        try:
+            SourceService(repository).delete(source_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {"ok": True}
 
     @app.get("/api/follows")
     def list_follows() -> Any:

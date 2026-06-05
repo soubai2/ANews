@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from anews_agent.domain import PreferenceFact, PreferencePolarity, PreferenceSummary
+from anews_agent.domain import (
+    PreferenceFact,
+    PreferencePolarity,
+    PreferenceSummary,
+    UserPreference,
+)
 from anews_agent.storage import NewsRepository
 
 
@@ -115,6 +120,16 @@ class PreferenceKnowledgeBase:
                 updated_at=timestamp,
             )
             self.repository.upsert_preference_fact(fact)
+            self.repository.upsert_preference(
+                UserPreference.from_value(
+                    kind=normalized.kind,
+                    value=normalized.value,
+                    weight=normalized.weight,
+                    created_from=source_message_id or normalized.source,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
             stored.append(fact)
         if stored:
             self.repository.upsert_preference_summary(

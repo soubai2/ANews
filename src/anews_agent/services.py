@@ -74,6 +74,9 @@ class PreferenceService:
             self._append_preference(preferences, "entity", entity, now, created_from)
         return preferences
 
+    def unfocus_news(self, news_id: str) -> None:
+        self.repository.delete_preferences_created_from(f"news:{news_id}")
+
     def focus_terms(
         self, terms: list[str], now: datetime, created_from: str
     ) -> list[UserPreference]:
@@ -145,6 +148,11 @@ class SourceService:
         self.repository.upsert_source(updated)
         return updated
 
+    def delete(self, source_id: str) -> None:
+        if self.repository.get_source(source_id) is None:
+            raise KeyError(f"Unknown source: {source_id}")
+        self.repository.delete_source(source_id)
+
 
 class FollowService:
     def __init__(self, repository: NewsRepository):
@@ -153,8 +161,14 @@ class FollowService:
     def follow_news(self, news_id: str, now: datetime) -> FollowedStory:
         return self.repository.follow_news(news_id, now)
 
+    def active_for_news(self, news_id: str) -> FollowedStory | None:
+        return self.repository.get_active_follow_for_news(news_id)
+
     def cancel(self, follow_id: str, now: datetime) -> None:
         self.repository.cancel_follow(follow_id, now)
+
+    def cancel_news(self, news_id: str, now: datetime) -> None:
+        self.repository.cancel_follow_for_news(news_id, now)
 
 
 class NewsPushService:

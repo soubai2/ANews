@@ -312,7 +312,7 @@ def _write_candidate_news(
             summary=str(item.get("summary") or ""),
             published_at=_parse_iso(item.get("published_at")) or now,
             evidence_urls=_string_list(item.get("evidence_urls")),
-            score=_float_arg(item.get("score"), default=0.0),
+            score=_candidate_score(item),
             selected=bool(item.get("selected", False)),
             rejection_reason=str(item.get("rejection_reason") or "") or None,
         )
@@ -438,7 +438,15 @@ def _selection_reason(item: dict[str, Any]) -> str:
 def _selection_score(item: dict[str, Any], *, default: float) -> float:
     if item.get("score") is not None:
         return _float_arg(item.get("score"), default=default)
-    return _float_arg(item.get("relevance_score"), default=default)
+    if item.get("relevance_score") is not None:
+        return _float_arg(item.get("relevance_score"), default=default)
+    if item.get("importance_score") is not None:
+        return _float_arg(item.get("importance_score"), default=default)
+    return default if default > 0 else 1.0
+
+
+def _candidate_score(item: dict[str, Any]) -> float:
+    return _selection_score(item, default=1.0)
 
 
 def _source_from_url(url: str) -> str:

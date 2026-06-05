@@ -17,8 +17,8 @@
 - Modify: `.anews.env`
 - Test: `tests/test_config.py`
 
-- [ ] Choose the first real search provider adapter. Keep the interface provider-neutral, but implement one usable provider behind env config.
-- [ ] Add config keys:
+- [x] Choose the first real search provider adapter. Keep the interface provider-neutral, but implement one usable provider behind env config.
+- [x] Add config keys:
   - `ANEWS_SEARCH_PROVIDER`
   - `ANEWS_SEARCH_API_KEY`
   - `ANEWS_SEARCH_BASE_URL`
@@ -26,8 +26,8 @@
   - `ANEWS_AGENT_MAX_TOOL_CALLS`
   - `ANEWS_AGENT_MAX_SEARCH_QUERIES`
   - `ANEWS_AGENT_MAX_READ_URLS`
-- [ ] Keep mock search provider for tests and offline development.
-- [ ] Add config tests for DeepSeek, search provider and agent budgets.
+- [x] Keep mock search provider for tests and offline development.
+- [x] Add config tests for DeepSeek, search provider and agent budgets.
 
 ## Task 1: Schema Migration For Agent Runs, Search And Chat
 
@@ -36,11 +36,11 @@
 - Modify: `src/anews_agent/domain.py`
 - Test: `tests/test_storage.py`
 
-- [ ] Add domain models for `ChatSession`, `ChatMessage`, `AgentRun`, `AgentToolCall`, `SearchQuery`, `SearchResult`, `RetrievedDocument`, `CandidateNews`, `PushSelection`, `PreferenceFact`, `PreferenceSummary`, `NewsUserState`.
-- [ ] Add SQLite tables for those models.
-- [ ] Add repository methods to create agent runs, append tool calls, save search results, save retrieved documents and persist chat messages.
-- [ ] Add `news_user_state` to persist read/focused/followed UI state per news item.
-- [ ] Add tests that prove user state survives refresh and process restart.
+- [x] Add domain models for `ChatSession`, `ChatMessage`, `AgentRun`, `AgentToolCall`, `SearchQuery`, `SearchResult`, `RetrievedDocument`, `CandidateNews`, `PushSelection`, `PreferenceFact`, `PreferenceSummary`, `NewsUserState`.
+- [x] Add SQLite tables for those models.
+- [x] Add repository methods to create agent runs, append tool calls, save search results, save retrieved documents and persist chat messages.
+- [x] Add `news_user_state` to persist read/focused/followed UI state per news item.
+- [x] Add tests that prove user state survives refresh and process restart.
 
 ## Task 2: Search Provider And Web Reader Layer
 
@@ -48,13 +48,13 @@
 - Create: `src/anews_agent/search.py`
 - Test: `tests/test_search.py`
 
-- [ ] Define `SearchProvider` protocol.
-- [ ] Define `WebReader` protocol.
-- [ ] Implement `MockSearchProvider` with deterministic results for tests.
-- [ ] Implement one real search provider adapter behind env config.
-- [ ] Implement URL read pipeline with timeout, content-type checks, title extraction, published time extraction and text cleanup.
-- [ ] Cache search results and retrieved documents to SQLite.
-- [ ] Add tests for query normalization, failure handling, caching and document extraction.
+- [x] Define `SearchProvider` protocol.
+- [x] Define `WebReader` protocol.
+- [x] Implement `MockSearchProvider` with deterministic results for tests.
+- [x] Implement one real search provider adapter behind env config.
+- [x] Implement URL read pipeline with timeout, content-type checks, title extraction, published time extraction and text cleanup.
+- [x] Cache search results and retrieved documents to SQLite.
+- [x] Add tests for query normalization, failure handling, caching and document extraction.
 
 ## Task 3: Preference Knowledge Base
 
@@ -63,13 +63,13 @@
 - Modify: `src/anews_agent/storage.py`
 - Test: `tests/test_preferences_kb.py`
 
-- [ ] Store preference facts separately from simple MVP preferences.
-- [ ] Support positive preferences, negative preferences, source preferences, entity preferences and behavior-derived signals.
-- [ ] Add SQLite FTS5 index for preference values and summaries.
-- [ ] Implement `query_preferences(task, limit)` for model tools.
-- [ ] Implement `update_preferences(changes, source_message_id)` for explicit user preference changes.
-- [ ] Generate compact prompt-ready preference summaries.
-- [ ] Add tests for preference merging, weight updates, negative preference handling and FTS query behavior.
+- [x] Store preference facts separately from simple MVP preferences.
+- [x] Support positive preferences, negative preferences, source preferences, entity preferences and behavior-derived signals.
+- [x] Add SQLite FTS5 index for preference values and summaries.
+- [x] Implement `query_preferences(task, limit)` for model tools.
+- [x] Implement `update_preferences(changes, source_message_id)` for explicit user preference changes.
+- [x] Generate compact prompt-ready preference summaries.
+- [x] Add tests for preference merging, weight updates, negative preference handling and FTS query behavior.
 
 ## Task 4: Agent Tool Registry
 
@@ -77,7 +77,7 @@
 - Create: `src/anews_agent/agent_tools.py`
 - Test: `tests/test_agent_tools.py`
 
-- [ ] Define tool schemas for DeepSeek:
+- [x] Define tool schemas for DeepSeek:
   - `query_preferences`
   - `search_web`
   - `search_user_sources`
@@ -89,9 +89,9 @@
   - `update_preferences`
   - `follow_story`
   - `explain_ranking`
-- [ ] Validate all tool arguments before execution.
-- [ ] Convert tool results into compact JSON-safe payloads.
-- [ ] Add tests for schema validity, argument validation and permission boundaries.
+- [x] Validate all tool arguments before execution.
+- [x] Convert tool results into compact JSON-safe payloads.
+- [x] Add tests for schema validity, argument validation and permission boundaries.
 
 ## Task 5: DeepSeek Tool-Calling Runtime
 
@@ -100,13 +100,13 @@
 - Create: `src/anews_agent/agent_runtime.py`
 - Test: `tests/test_agent_runtime.py`
 
-- [ ] Extend the DeepSeek provider to support tool definitions, tool-call responses and multi-turn tool loops.
-- [ ] Preserve the existing enrichment path, but separate it from Agent runtime.
-- [ ] Add strict JSON validation on model outputs before executing tools.
-- [ ] Add max tool calls, max runtime and max token budget enforcement.
-- [ ] Persist each model message and tool call into `agent_runs`.
-- [ ] Add tests with a fake model that calls tools across multiple turns.
-- [ ] Add tests for malformed tool arguments, tool failure, budget exhaustion and final answer validation.
+- [x] Extend the DeepSeek provider to support tool definitions, tool-call responses and multi-turn tool loops.
+- [x] Preserve the existing enrichment path, but separate it from Agent runtime.
+- [x] Add strict JSON validation on model outputs before executing tools.
+- [x] Add max tool calls, max runtime and max token budget enforcement.
+- [x] Persist each model message and tool call into `agent_runs`.
+- [x] Add tests with a fake model that calls tools across multiple turns.
+- [x] Add tests for malformed tool arguments, tool failure, budget exhaustion and final answer validation.
 
 ## Task 6: Model-Driven Push Service
 
@@ -196,8 +196,8 @@
 
 ## Delivery Order
 
-- [ ] Finish Tasks 0-2 first so networking and search are real.
-- [ ] Finish Tasks 3-5 next so DeepSeek can use preference and search tools.
+- [x] Finish Tasks 0-2 first so networking and search are real.
+- [x] Finish Tasks 3-5 next so DeepSeek can use preference and search tools.
 - [ ] Finish Task 6 before changing scheduler behavior.
 - [ ] Finish Task 7 and Task 8 together so the product clearly shows real Agent behavior.
 - [ ] Finish Task 9 after manual push is stable.

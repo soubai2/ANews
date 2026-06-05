@@ -168,6 +168,7 @@ Search 模块不是一个简单后端搜索函数，而是模型可调用的工�
 - 点击关注后按钮立即变成“已关注”，图标填充或使用明确选中样式。
 - 点击跟进后按钮立即变成“已跟进”，并显示跟进状态。
 - 操作期间按钮进入 loading/disabled 状态，失败后恢复并显示错误。
+- DeepSeek、搜索 API 和推送路径的可用性与降级状态必须在 UI 中明确显示；如果系统使用 mock、RSS、缓存或规则 fallback，用户必须看得见。
 - 推送刷新期间显示 Agent 执行状态，而不是只显示一个顶部状态文本。
 - 对话页显示消息流和工具执行过程。
 - App 内阅读页保留返回、引用信息和源网页读取失败提示。
@@ -223,6 +224,7 @@ Search 模块不是一个简单后端搜索函数，而是模型可调用的工�
 - run 类型：scheduled push、manual push、chat、follow-up check。
 - 输入上下文摘要。
 - 模型 provider、model、base URL 和配置状态。
+- 是否降级、降级原因，以及 DeepSeek / 搜索 API 是否已配置。
 - tool calls 顺序、参数和耗时。
 - 搜索 query。
 - 被读取 URL。

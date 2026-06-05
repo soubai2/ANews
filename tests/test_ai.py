@@ -80,6 +80,35 @@ def test_deepseek_provider_uses_chat_completions_shape_and_parses_json():
     assert result.fallback_used is False
 
 
+def test_deepseek_provider_supports_tool_chat_completions_shape():
+    client = FakeHTTPClient({"choices": [{"message": {"content": "done"}}]})
+    provider = DeepSeekProvider(
+        api_key="secret",
+        settings=AISettings.default(),
+        http_client=client,
+    )
+
+    payload = provider.chat_completion(
+        messages=[{"role": "user", "content": "search"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_web",
+                    "description": "Search web",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+    )
+
+    request = client.requests[0]
+    assert payload["choices"][0]["message"]["content"] == "done"
+    assert request["json"]["tools"][0]["function"]["name"] == "search_web"
+    assert request["json"]["tool_choice"] == "auto"
+    assert request["json"]["stream"] is False
+
+
 def test_fallback_provider_does_not_tag_ai_from_substrings():
     now = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
     news = NewsItem.from_raw(

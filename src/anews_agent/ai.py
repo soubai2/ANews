@@ -103,44 +103,32 @@ class DeepSeekProvider:
         self.timeout = timeout
 
     def enrich(self, news: NewsItem) -> AIEnrichment:
-        response = self.http_client.post(
-            f"{self.settings.base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.settings.model,
-                "stream": False,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Enrich news for an in-app news agent. Return strict JSON "
-                            "with summary, tags, entities, and recommendation_reason."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "title": news.title,
-                                "source": news.source_name,
-                                "url": news.url,
-                                "published_at": news.published_at.isoformat(),
-                                "summary": news.summary,
-                                "category": news.category,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-            },
-            timeout=self.timeout,
+        payload = self.chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Enrich news for an in-app news agent. Return strict JSON "
+                        "with summary, tags, entities, and recommendation_reason."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "title": news.title,
+                            "source": news.source_name,
+                            "url": news.url,
+                            "published_at": news.published_at.isoformat(),
+                            "summary": news.summary,
+                            "category": news.category,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
         )
-        response.raise_for_status()
-        payload = response.json()
         content = payload["choices"][0]["message"]["content"]
         parsed = json.loads(content)
         return AIEnrichment(
@@ -151,6 +139,37 @@ class DeepSeekProvider:
             used_provider="deepseek",
             fallback_used=False,
         )
+
+    def chat_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.settings.model,
+            "stream": stream,
+            "messages": messages,
+        }
+        if tools is not None:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
+        if response_format is not None:
+            payload["response_format"] = response_format
+        response = self.http_client.post(
+            f"{self.settings.base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 class NewsAIService:

@@ -153,9 +153,9 @@
 - Modify: `desktop/src/api.js`
 - Test: `desktop/tests/ui-contracts.test.mjs`
 
-- [ ] Add `is_focused`, `is_followed`, `is_read` state to news cards.
+- [x] Add `is_focused`, `is_followed`, `is_read` state to news cards.
 - [ ] Make focus/follow operations optimistic with loading state and rollback on failure.
-- [ ] Change button labels and icons to clearly show `已关注` and `已跟进`.
+- [x] Change button labels and icons to clearly show `已关注` and `已跟进`.
 - [ ] Add card-local error feedback for failed actions.
 - [ ] Add Agent run progress panel for push refresh.
 - [x] Replace command box with chat transcript.

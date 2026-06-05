@@ -55,6 +55,17 @@ function normalizeBundle(value) {
   };
 }
 
+function updateBundleNewsState(bundle, id, patch) {
+  const updateItems = (items) =>
+    asArray(items).map((item) => (item.id === id ? { ...item, ...patch } : item));
+  return normalizeBundle({
+    ...bundle,
+    latest: updateItems(bundle.latest),
+    relevant: updateItems(bundle.relevant),
+    follow_updates: updateItems(bundle.follow_updates),
+  });
+}
+
 function formatTime(value) {
   if (!value) return "尚未运行";
   const date = new Date(value);
@@ -94,6 +105,8 @@ function providerStateClass(statusValue) {
 function NewsCard({ item, onFocus, onFollow, onOpen }) {
   const tags = asArray(item.tags).slice(0, 4);
   const reasons = asArray(item.recommendation_reasons).slice(0, 2);
+  const isFocused = Boolean(item.is_focused);
+  const isFollowed = Boolean(item.is_followed);
 
   return (
     <article className="news-card">
@@ -124,13 +137,23 @@ function NewsCard({ item, onFocus, onFollow, onOpen }) {
         </div>
       )}
       <div className="card-actions">
-        <button type="button" onClick={() => onFocus(item.id)} title="加入长期关注">
-          <Heart size={16} />
-          <span>关注</span>
+        <button
+          className={isFocused ? "selected" : ""}
+          type="button"
+          onClick={() => onFocus(item.id)}
+          title={isFocused ? "已加入长期关注" : "加入长期关注"}
+        >
+          <Heart fill={isFocused ? "currentColor" : "none"} size={16} />
+          <span>{isFocused ? "已关注" : "关注"}</span>
         </button>
-        <button type="button" onClick={() => onFollow(item.id)} title="跟进后续变化">
-          <Star size={16} />
-          <span>跟进</span>
+        <button
+          className={isFollowed ? "selected" : ""}
+          type="button"
+          onClick={() => onFollow(item.id)}
+          title={isFollowed ? "已跟进后续变化" : "跟进后续变化"}
+        >
+          <Star fill={isFollowed ? "currentColor" : "none"} size={16} />
+          <span>{isFollowed ? "已跟进" : "跟进"}</span>
         </button>
         <button type="button" onClick={() => onOpen(item)} title="查看新闻详情">
           <ExternalLink size={16} />
@@ -232,6 +255,7 @@ export function App() {
   async function focusNews(id) {
     if (!id) return;
     setStatus("正在更新偏好");
+    setBundle((current) => updateBundleNewsState(current, id, { is_focused: true }));
     try {
       await api.focusNews(id);
       await refreshAll();
@@ -243,6 +267,7 @@ export function App() {
   async function followNews(id) {
     if (!id) return;
     setStatus("正在添加跟进");
+    setBundle((current) => updateBundleNewsState(current, id, { is_followed: true }));
     try {
       await api.followNews(id);
       await refreshAll();

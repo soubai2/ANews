@@ -73,3 +73,15 @@ test("dialog page uses persisted chat api instead of local command parser", () =
   assert.match(app, /对话降级/);
   assert.doesNotMatch(app, /api\.listNews\(text\)/);
 });
+
+test("news cards render focused and followed states", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const styles = readDesktopFile("src/styles.css");
+
+  assert.match(app, /is_focused/);
+  assert.match(app, /is_followed/);
+  assert.match(app, /已关注/);
+  assert.match(app, /已跟进/);
+  assert.match(app, /updateBundleNewsState/);
+  assert.match(styles, /\.card-actions button\.selected/);
+});

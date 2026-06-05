@@ -43,6 +43,10 @@ def test_health_push_run_focus_follow_sources_preferences_and_ai_status(tmp_path
     news_id = latest[0]["id"]
     assert client.post(f"/api/news/{news_id}/focus").status_code == 200
     assert client.post(f"/api/news/{news_id}/follow").status_code == 200
+    updated_latest = client.get("/api/push").json()["latest"]
+    updated_item = next(item for item in updated_latest if item["id"] == news_id)
+    assert updated_item["is_focused"] is True
+    assert updated_item["is_followed"] is True
     assert client.get("/api/preferences").json()
     assert client.get("/api/follows").json()
     assert client.get("/api/ai/status").json()["provider"] == "deepseek"
@@ -112,6 +116,18 @@ def test_get_missing_news_returns_404(tmp_path):
     response = client.get("/api/news/missing-news")
 
     assert response.status_code == 404
+
+
+def test_get_news_marks_item_read_in_user_state(tmp_path):
+    client = make_client(tmp_path)
+    run_response = client.post("/api/push/run")
+    news_id = run_response.json()["latest"][0]["id"]
+
+    detail = client.get(f"/api/news/{news_id}").json()
+    listed = client.get("/api/news").json()
+
+    assert detail["is_read"] is True
+    assert next(item for item in listed if item["id"] == news_id)["is_read"] is True
 
 
 def test_cors_allows_local_renderer_origin(tmp_path):

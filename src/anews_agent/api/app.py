@@ -17,7 +17,7 @@ from anews_agent.agent_push import (
 from anews_agent.ai import NewsAIService
 from anews_agent.chat import build_chat_service
 from anews_agent.config import AppConfig
-from anews_agent.domain import AISettings, Source, SourceType
+from anews_agent.domain import AISettings, NewsItem, NewsUserState, PushBundle, Source, SourceType
 from anews_agent.scheduler import create_push_scheduler
 from anews_agent.search import build_search_provider
 from anews_agent.services import FollowService, NewsPushService, PreferenceService, SourceService
@@ -101,13 +101,13 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
     def current_push() -> Any:
         now = _utc_now()
         service = build_push_service(repository, resolved_config, now=now)
-        return serialize(service.current_bundle(now))
+        return serialize_bundle_with_state(repository, service.current_bundle(now))
 
     @app.post("/api/push/run")
     def run_push() -> Any:
         now = _utc_now()
         service = build_push_service(repository, resolved_config, now=now)
-        return serialize(service.run_once(now))
+        return serialize_bundle_with_state(repository, service.run_once(now))
 
     @app.post("/api/agent/push/run")
     def run_agent_push() -> Any:
@@ -137,7 +137,7 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
 
     @app.get("/api/news")
     def search_news(q: str = "") -> Any:
-        return serialize(repository.search_news(q))
+        return [serialize_news_with_state(repository, item) for item in repository.search_news(q)]
 
     @app.post("/api/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateRequest) -> Any:
@@ -199,7 +199,11 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
         news = repository.get_news(news_id)
         if news is None:
             raise HTTPException(status_code=404, detail="News item not found")
-        return serialize(news)
+        state = repository.get_news_user_state(news.id)
+        repository.upsert_news_user_state(
+            replace(state, is_read=True, last_action_at=_utc_now())
+        )
+        return serialize_news_with_state(repository, news)
 
     @app.post("/api/news/{news_id}/focus")
     def focus_news(news_id: str) -> Any:
@@ -207,6 +211,10 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
             preferences = PreferenceService(repository).focus_news(news_id, _utc_now())
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        state = repository.get_news_user_state(news_id)
+        repository.upsert_news_user_state(
+            replace(state, is_focused=True, last_action_at=_utc_now())
+        )
         return serialize(preferences)
 
     @app.post("/api/news/{news_id}/follow")
@@ -215,6 +223,10 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
             follow = FollowService(repository).follow_news(news_id, _utc_now())
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        state = repository.get_news_user_state(news_id)
+        repository.upsert_news_user_state(
+            replace(state, is_followed=True, last_action_at=_utc_now())
+        )
         return serialize(follow)
 
     @app.get("/api/preferences")
@@ -367,6 +379,32 @@ def serialize(obj: Any) -> Any:
     if isinstance(obj, (list, tuple, set)):
         return [serialize(value) for value in obj]
     return obj
+
+
+def serialize_news_with_state(repository: NewsRepository, item: NewsItem) -> dict[str, Any]:
+    data = serialize(item)
+    state = repository.get_news_user_state(item.id)
+    data.update(
+        {
+            "is_read": state.is_read,
+            "is_focused": state.is_focused,
+            "is_followed": state.is_followed,
+            "last_action_at": serialize(state.last_action_at),
+        }
+    )
+    return data
+
+
+def serialize_bundle_with_state(repository: NewsRepository, bundle: PushBundle) -> dict[str, Any]:
+    return {
+        "latest": [serialize_news_with_state(repository, item) for item in bundle.latest],
+        "relevant": [serialize_news_with_state(repository, item) for item in bundle.relevant],
+        "follow_updates": [
+            serialize_news_with_state(repository, item) for item in bundle.follow_updates
+        ],
+        "last_push_at": serialize(bundle.last_push_at),
+        "next_push_at": serialize(bundle.next_push_at),
+    }
 
 
 def _sync_ai_settings_with_config(repository: NewsRepository, config: AppConfig) -> None:

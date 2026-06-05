@@ -10,3 +10,4 @@ pytest-cache-files-*/
 *.db
 node_modules/
 dist/
+.anews.env

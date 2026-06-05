@@ -174,10 +174,32 @@ def build_default_tool_registry(
     )
     registry.register(
         AgentTool(
+            name="add_preference",
+            description=(
+                "Add one explicit long-term user preference or dislike to the local preference "
+                "knowledge base. Use this when the user asks to remember, prefer, reduce, "
+                "avoid, prioritize, or deprioritize a topic, source, entity, keyword, "
+                "category, region, language, or ranking rule."
+            ),
+            parameters=_object_schema(_preference_update_properties(), required=["kind", "value"]),
+            handler=lambda args: _add_preference(preference_kb, args, clock()),
+        )
+    )
+    registry.register(
+        AgentTool(
             name="update_preferences",
-            description="Update preference knowledge base after explicit user preference changes.",
+            description=(
+                "Batch update explicit long-term user preferences. Prefer add_preference for "
+                "a single preference; use this when one user message contains multiple "
+                "preference changes."
+            ),
             parameters=_object_schema(
-                {"changes": {"type": "array", "items": {"type": "object"}}},
+                {
+                    "changes": {
+                        "type": "array",
+                        "items": _preference_update_item_schema(),
+                    }
+                },
                 required=["changes"],
             ),
             handler=lambda args: {
@@ -216,6 +238,52 @@ def _object_schema(
         "type": "object",
         "properties": properties,
         "required": required or [],
+        "additionalProperties": False,
+    }
+
+
+def _preference_update_properties() -> dict[str, Any]:
+    return {
+        "kind": {
+            "type": "string",
+            "description": (
+                "Preference type, for example topic, entity, source, category, keyword, "
+                "region, language, or ranking."
+            ),
+        },
+        "value": {
+            "type": "string",
+            "description": "The exact preference value to remember.",
+        },
+        "polarity": {
+            "type": "string",
+            "enum": ["positive", "negative"],
+            "description": "Use positive for prefer/prioritize; negative for avoid/reduce.",
+        },
+        "weight": {
+            "type": "number",
+            "minimum": 0.1,
+            "maximum": 10,
+            "description": (
+                "Strength of the preference. Use 1 by default, 2 or higher for strong signals."
+            ),
+        },
+        "source": {
+            "type": "string",
+            "description": "Why or where this preference was inferred, usually chat.",
+        },
+        "evidence": {
+            "type": "string",
+            "description": "Short user quote or rationale that justifies this preference.",
+        },
+    }
+
+
+def _preference_update_item_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": _preference_update_properties(),
+        "required": ["kind", "value"],
         "additionalProperties": False,
     }
 
@@ -433,6 +501,25 @@ def _selection_reason(item: dict[str, Any]) -> str:
         or _str_arg(item, "recommendation_reason", "")
         or _str_arg(item, "recommendation", "")
     )
+
+
+def _add_preference(
+    preference_kb: PreferenceKnowledgeBase, args: dict[str, Any], now: datetime
+) -> dict[str, Any]:
+    updated = preference_kb.update_preferences([args], now=now)
+    if not updated:
+        raise ValueError("Preference kind and value are required")
+    fact = updated[0]
+    serialized = {
+        "id": fact.id,
+        "kind": fact.kind,
+        "value": fact.value,
+        "polarity": fact.polarity,
+        "weight": fact.weight,
+        "source": fact.source,
+        "evidence": fact.evidence,
+    }
+    return {"preference": serialized, "updated": [serialized]}
 
 
 def _selection_score(item: dict[str, Any], *, default: float) -> float:

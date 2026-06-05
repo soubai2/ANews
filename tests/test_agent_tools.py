@@ -33,24 +33,40 @@ def test_registry_exposes_deepseek_function_schemas(tmp_path):
     names = {schema["function"]["name"] for schema in schemas}
 
     assert "query_preferences" in names
+    assert "add_preference" in names
     assert "search_web" in names
     assert "read_url" in names
     assert "select_push_items" in names
     assert all(schema["type"] == "function" for schema in schemas)
+    add_schema = next(schema for schema in schemas if schema["function"]["name"] == "add_preference")
+    properties = add_schema["function"]["parameters"]["properties"]
+    assert {"kind", "value", "polarity", "weight", "evidence"} <= set(properties)
+    assert add_schema["function"]["parameters"]["required"] == ["kind", "value"]
 
 
 def test_registry_executes_preferences_search_and_read_tools(tmp_path):
     repo, registry, now = build_registry(tmp_path)
+    added = registry.execute(
+        "add_preference",
+        {
+            "kind": "topic",
+            "value": "AI chips",
+            "weight": 2,
+            "evidence": "user asked to remember it",
+        },
+    )
     registry.execute(
         "update_preferences",
-        {"changes": [{"kind": "topic", "value": "AI chips", "weight": 2}]},
+        {"changes": [{"kind": "source", "value": "company blogs", "weight": 1.5}]},
     )
 
     preferences = registry.execute("query_preferences", {"task": "chips"})
     search = registry.execute("search_web", {"query": "AI chips", "max_results": 1})
     document = registry.execute("read_url", {"url": "https://example.com/news"})
 
+    assert added["preference"]["value"] == "AI chips"
     assert preferences["facts"][0]["value"] == "AI chips"
+    assert any(preference.value == "AI chips" for preference in repo.list_preferences())
     assert search["provider"] == "mock"
     assert repo.get_search_query(search["query_id"]) is not None
     assert document["title"] == "Doc"

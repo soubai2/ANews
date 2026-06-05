@@ -146,9 +146,12 @@ class ChatService:
                     "preference lookup, preference updates, and follow requests. Cite URLs. "
                     "For every conversation turn, call query_preferences before answering. "
                     "If the user states a lasting interest, dislike, source preference, or "
-                    "ranking preference, call update_preferences. If the user asks for current "
+                    "ranking preference, call add_preference for a single preference or "
+                    "update_preferences for multiple preferences. If the user asks for current "
                     "news, search the web, write candidate news, and call select_push_items so "
-                    "the result enters the news pool and push page. Use Markdown in the final answer."
+                    "the result enters the news pool and push page. Never say you cannot add "
+                    "preferences when the add_preference tool is available. Use Markdown in the "
+                    "final answer."
                 ),
             }
         ]
@@ -224,7 +227,7 @@ def _summarize_agent_actions(tool_calls: list[AgentToolCall]) -> dict[str, Any]:
         if call.status != "success":
             continue
         tool_names.append(call.tool_name)
-        if call.tool_name == "update_preferences":
+        if call.tool_name in {"add_preference", "update_preferences"}:
             actions["preferences_updated"] += len(call.result.get("updated", []))
         elif call.tool_name == "write_candidate_news":
             actions["candidates_written"] += len(call.result.get("stored_candidate_ids", []))

@@ -181,3 +181,40 @@ def test_chat_service_reports_tool_actions_and_materializes_push_news(tmp_path):
     assert [message.role for message in result.messages] == ["user", "assistant"]
     assert "### 已完成" in result.messages[-1].content
     assert any(message["content"] == user_text for message in model.requests[-1]["messages"])
+
+
+def test_chat_service_exposes_and_executes_add_preference_tool(tmp_path):
+    user_text = "请把 AI 芯片加入我的长期偏好"
+    repo, service, model, _ = make_chat_service(
+        tmp_path,
+        [
+            tool_response(
+                "add_preference",
+                {
+                    "kind": "topic",
+                    "value": "AI 芯片",
+                    "weight": 2,
+                    "evidence": user_text,
+                },
+            ),
+            final_response("已把 **AI 芯片** 加入长期偏好。"),
+        ],
+    )
+    session = service.create_session("偏好设置")
+
+    result = service.send_message(session.id, user_text)
+
+    first_request_tool_names = {
+        schema["function"]["name"] for schema in model.requests[0]["tools"]
+    }
+    assert "add_preference" in first_request_tool_names
+    add_schema = next(
+        schema
+        for schema in model.requests[0]["tools"]
+        if schema["function"]["name"] == "add_preference"
+    )
+    assert add_schema["function"]["parameters"]["required"] == ["kind", "value"]
+    assert "polarity" in add_schema["function"]["parameters"]["properties"]
+    assert result.actions["preferences_updated"] == 1
+    assert repo.list_preferences()[0].value == "AI 芯片"
+    assert "AI 芯片" in result.messages[-1].content

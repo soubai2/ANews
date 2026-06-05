@@ -26,7 +26,7 @@ test("news details use local article snapshots instead of embedded source iframe
   const styles = readDesktopFile("src/styles.css");
 
   assert.match(app, /article_snapshot/);
-  assert.match(app, /renderMarkdownMessage\(selectedNews\.article_snapshot/);
+  assert.match(app, /renderMarkdownMessage\(news\.article_snapshot/);
   assert.match(app, /article-reader/);
   assert.doesNotMatch(app, /<iframe/);
   assert.doesNotMatch(app, /readerUrl/);
@@ -49,8 +49,8 @@ test("app exposes ai and search provider degradation status", () => {
   const api = readDesktopFile("src/api.js");
 
   assert.match(api, /searchStatus: \(\) => request\("\/api\/search\/status"\)/);
-  assert.match(app, /DeepSeek \{providerStateLabel\(aiStatus\)\}/);
-  assert.match(app, /搜索 API \{providerStateLabel\(searchStatus\)\}/);
+  assert.match(app, /DeepSeek \{providerStateLabel\(dashboardView\.aiStatus\)\}/);
+  assert.match(app, /搜索 API \{providerStateLabel\(dashboardView\.searchStatus\)\}/);
   assert.match(app, /degradation_reason/);
   assert.match(app, /live_check_note/);
   assert.match(app, /agent_max_tool_calls/);
@@ -80,7 +80,7 @@ test("manual push shows an accessible progress indicator while running", () => {
   assert.match(app, /step\.key !== "refresh"/);
   assert.match(app, /role="progressbar"/);
   assert.match(app, /aria-valuenow=\{progress\.value\}/);
-  assert.match(app, /disabled=\{pushBusy\}/);
+  assert.match(app, /disabled=\{view\.pushBusy\}/);
   assert.match(styles, /\.push-progress/);
   assert.match(styles, /\.push-progress__fill/);
 });
@@ -160,4 +160,70 @@ test("importance score has a nonzero readable display path", () => {
   assert.match(app, /importanceLabel/);
   assert.match(app, /importanceScoreClass/);
   assert.match(app, /importance_score/);
+});
+
+test("refactored desktop shell exposes readable control-room landmarks", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const styles = readDesktopFile("src/styles.css");
+
+  assert.match(app, /新闻工作台/);
+  assert.match(app, /metric-rail/);
+  assert.match(app, /section--latest/);
+  assert.match(app, /section--relevant/);
+  assert.match(app, /section--follow/);
+  assert.match(app, /control-card/);
+  assert.match(styles, /\.metric-rail/);
+  assert.match(styles, /\.section--latest/);
+  assert.match(styles, /\.control-card/);
+});
+
+test("dialog page keeps app-native command controls after UI refactor", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const styles = readDesktopFile("src/styles.css");
+
+  assert.match(app, /command-center/);
+  assert.match(app, /chatgpt-shell/);
+  assert.match(app, /会话队列/);
+  assert.match(app, /输入新闻查询、偏好调整或来源管理指令/);
+  assert.match(styles, /\.command-center/);
+  assert.match(styles, /height: min\(760px, calc\(100vh - 150px\)\)/);
+  assert.match(styles, /\.chat-list/);
+  assert.match(styles, /overflow-y: auto/);
+  assert.match(styles, /\.chat-composer/);
+  assert.match(styles, /grid-template-rows: auto minmax\(0, 1fr\) auto/);
+  assert.match(styles, /\.chat-composer/);
+});
+
+test("desktop ui logic is organized around a page registry and shared action context", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  assert.match(app, /function useAnewsDashboard/);
+  assert.match(app, /const pageRegistry/);
+  assert.match(app, /function renderActivePage/);
+  assert.match(app, /const dashboardActions/);
+  assert.match(app, /const dashboardView/);
+  assert.match(app, /pageRegistry\[view\.active\]/);
+});
+
+test("push page is rendered from a declarative section model", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  assert.match(app, /const pushSections/);
+  assert.match(app, /function PushPage/);
+  assert.match(app, /section\.variant/);
+  assert.match(app, /section\.items/);
+  assert.match(app, /section\.empty/);
+});
+
+test("ui does not expose duplicate buttons for the same workflow", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  const runPushButtons = app.match(/onClick=\{(?:actions|dashboardActions)\.runPush\}/g) || [];
+  const newChatButtons = app.match(/onClick=\{actions\.createNewChat\}/g) || [];
+
+  assert.equal(runPushButtons.length, 1);
+  assert.equal(newChatButtons.length, 1);
+  assert.doesNotMatch(app, /className="hint-row"/);
+  assert.doesNotMatch(app, /立即执行一轮推送/);
+  assert.doesNotMatch(app, /推送中" : "刷新"/);
 });

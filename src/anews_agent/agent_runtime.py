@@ -45,6 +45,7 @@ class AgentRuntime:
         non_budgeted_tool_names: set[str] | None = None,
         run_scoped_tool_names: set[str] | None = None,
         budget_recovery_tool_names: set[str] | None = None,
+        tool_phase_allowed_names: dict[str, set[str]] | None = None,
         now: Any | None = None,
     ) -> None:
         self.repository = repository
@@ -54,6 +55,10 @@ class AgentRuntime:
         self.non_budgeted_tool_names = frozenset(non_budgeted_tool_names or set())
         self.run_scoped_tool_names = frozenset(run_scoped_tool_names or set())
         self.budget_recovery_tool_names = frozenset(budget_recovery_tool_names or set())
+        self.tool_phase_allowed_names = {
+            name: frozenset(allowed_names)
+            for name, allowed_names in (tool_phase_allowed_names or {}).items()
+        }
         self.now = now or (lambda: datetime.now(timezone.utc))
 
     def run(
@@ -82,15 +87,17 @@ class AgentRuntime:
         budgeted_tool_count = 0
         tool_sequence = 0
         recovering_from_budget = False
+        phase_allowed_names: frozenset[str] | None = None
 
         try:
             while True:
+                active_allowed_names = _intersect_allowed_names(
+                    phase_allowed_names,
+                    self.budget_recovery_tool_names if recovering_from_budget else None,
+                )
                 response = self.model.complete(
                     messages=working_messages,
-                    tools=_filter_tool_schemas(
-                        self.registry.schemas(),
-                        self.budget_recovery_tool_names if recovering_from_budget else None,
-                    ),
+                    tools=_filter_tool_schemas(self.registry.schemas(), active_allowed_names),
                 )
                 assistant_message = _assistant_message(response)
                 tool_calls = assistant_message.get("tool_calls") or []
@@ -132,7 +139,16 @@ class AgentRuntime:
                     if tool_name not in self.non_budgeted_tool_names:
                         budgeted_tool_count += 1
                     tool_sequence += 1
-                    tool_message = self._execute_tool_call(run.id, tool_sequence, raw_call)
+                    if phase_allowed_names is not None and tool_name not in phase_allowed_names:
+                        tool_message = self._record_tool_sequence_violation(
+                            run.id,
+                            tool_sequence,
+                            raw_call,
+                            allowed_names=phase_allowed_names,
+                        )
+                    else:
+                        tool_message = self._execute_tool_call(run.id, tool_sequence, raw_call)
+                        phase_allowed_names = self.tool_phase_allowed_names.get(tool_name)
                     working_messages.append(tool_message)
         except Exception as error:
             failed = replace(
@@ -151,11 +167,41 @@ class AgentRuntime:
         if not isinstance(function, dict):
             raise ValueError("Tool call missing function payload")
         tool_name = str(function.get("name") or "")
-        arguments = _parse_arguments(function.get("arguments"))
-        if tool_name in self.run_scoped_tool_names:
-            arguments = {**arguments, "run_id": run_id}
         started_at = self.now()
         call_id = str(raw_call.get("id") or f"call_{sequence}")
+        try:
+            arguments = _parse_arguments(function.get("arguments"))
+        except Exception as error:
+            error_message = f"Invalid tool arguments JSON: {error}"
+            failed = AgentToolCall.from_call(
+                run_id=run_id,
+                sequence=sequence,
+                tool_name=tool_name,
+                arguments={},
+                status="failed",
+                started_at=started_at,
+                finished_at=self.now(),
+                error_message=error_message,
+            )
+            self.repository.append_agent_tool_call(failed)
+            return {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(
+                    {
+                        "error": "tool_arguments_invalid",
+                        "error_message": error_message,
+                        "retry_instruction": (
+                            "Call the same tool again with compact valid JSON. "
+                            "Escape newlines and quotes inside strings. If article_markdown "
+                            "caused the failure, omit it or keep it short."
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        if tool_name in self.run_scoped_tool_names:
+            arguments = {**arguments, "run_id": run_id}
         running = AgentToolCall.from_call(
             run_id=run_id,
             sequence=sequence,
@@ -189,6 +235,48 @@ class AgentRuntime:
             "content": json.dumps(result, ensure_ascii=False),
         }
 
+    def _record_tool_sequence_violation(
+        self,
+        run_id: str,
+        sequence: int,
+        raw_call: dict[str, Any],
+        *,
+        allowed_names: frozenset[str],
+    ) -> dict[str, Any]:
+        function = raw_call.get("function") if isinstance(raw_call, dict) else None
+        tool_name = str(function.get("name") or "") if isinstance(function, dict) else ""
+        call_id = str(raw_call.get("id") or f"call_{sequence}")
+        started_at = self.now()
+        allowed_list = sorted(allowed_names)
+        error_message = (
+            "Tool sequence violation: call one of "
+            f"{', '.join(allowed_list)} before calling {tool_name or 'another tool'}."
+        )
+        failed = AgentToolCall.from_call(
+            run_id=run_id,
+            sequence=sequence,
+            tool_name=tool_name,
+            arguments={},
+            status="failed",
+            started_at=started_at,
+            finished_at=self.now(),
+            error_message=error_message,
+        )
+        self.repository.append_agent_tool_call(failed)
+        return {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": json.dumps(
+                {
+                    "error": "tool_sequence_violation",
+                    "error_message": error_message,
+                    "allowed_tools": allowed_list,
+                    "retry_instruction": "Use one of the allowed tools now.",
+                },
+                ensure_ascii=False,
+            ),
+        }
+
 
 def _assistant_message(response: dict[str, Any]) -> dict[str, Any]:
     choices = response.get("choices")
@@ -217,6 +305,16 @@ def _filter_tool_schemas(
         for schema in schemas
         if schema.get("function", {}).get("name") in allowed_names
     ]
+
+
+def _intersect_allowed_names(
+    left: frozenset[str] | None, right: frozenset[str] | None
+) -> frozenset[str] | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return frozenset(left.intersection(right))
 
 
 def _budget_recovery_message(tool_names: frozenset[str]) -> dict[str, str]:

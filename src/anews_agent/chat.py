@@ -192,7 +192,11 @@ def build_chat_service(
             search_service=search_service,
             now=now,
         )
-        provider = DeepSeekProvider(api_key=config.deepseek_api_key, settings=settings)
+        provider = DeepSeekProvider(
+            api_key=config.deepseek_api_key,
+            settings=settings,
+            timeout=config.deepseek_timeout_seconds,
+        )
         runtime = AgentRuntime(
             repository=repository,
             registry=registry,

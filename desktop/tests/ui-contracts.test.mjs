@@ -53,6 +53,9 @@ test("app exposes ai and search provider degradation status", () => {
   assert.match(app, /搜索 API \{providerStateLabel\(searchStatus\)\}/);
   assert.match(app, /degradation_reason/);
   assert.match(app, /live_check_note/);
+  assert.match(app, /agent_max_tool_calls/);
+  assert.match(app, /agent_max_search_queries/);
+  assert.match(app, /agent_max_read_urls/);
 });
 
 test("manual push uses agent push endpoint and surfaces degradation", () => {
@@ -64,6 +67,31 @@ test("manual push uses agent push endpoint and surfaces degradation", () => {
   assert.match(app, /api\.runAgentPush\(\)/);
   assert.match(app, /模型推送失败/);
   assert.match(app, /degradation_reason/);
+});
+
+test("manual push shows an accessible progress indicator while running", () => {
+  const app = readDesktopFile("src/App.jsx");
+  const styles = readDesktopFile("src/styles.css");
+
+  assert.match(app, /pushProgress/);
+  assert.match(app, /PushProgress/);
+  assert.match(app, /PUSH_PROGRESS_PENDING_STEPS/);
+  assert.match(app, /PUSH_PROGRESS_PENDING_STEPS = PUSH_PROGRESS_STEPS\.filter/);
+  assert.match(app, /step\.key !== "refresh"/);
+  assert.match(app, /role="progressbar"/);
+  assert.match(app, /aria-valuenow=\{progress\.value\}/);
+  assert.match(app, /disabled=\{pushBusy\}/);
+  assert.match(styles, /\.push-progress/);
+  assert.match(styles, /\.push-progress__fill/);
+});
+
+test("manual push prefers concrete backend errors over generic failure codes", () => {
+  const app = readDesktopFile("src/App.jsx");
+
+  assert.match(app, /agentFailureReason/);
+  assert.match(app, /"model_search_push_failed", "model_tool_arguments_invalid"/);
+  assert.match(app, /\.includes\(\s*detail\?\.degradation_reason/);
+  assert.match(app, /detail\?\.error_message \|\| detail\?\.message/);
 });
 
 test("dialog page uses persisted chat api instead of local command parser", () => {

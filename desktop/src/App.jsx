@@ -3,6 +3,7 @@ import {
   Bot,
   ExternalLink,
   Heart,
+  LoaderCircle,
   Newspaper,
   Play,
   Plus,
@@ -40,6 +41,25 @@ const sourceTypes = [
   { value: "search", label: "搜索" },
   { value: "mock", label: "模拟" },
 ];
+
+const PUSH_PROGRESS_IDLE = {
+  visible: false,
+  running: false,
+  value: 0,
+  label: "等待推送",
+  detail: "模型推送尚未开始",
+  tone: "idle",
+};
+
+const PUSH_PROGRESS_STEPS = [
+  { key: "preflight", value: 14, label: "准备推送", detail: "检查 DeepSeek 与搜索 API 状态" },
+  { key: "search", value: 38, label: "联网搜索", detail: "按偏好检索新闻与指定来源" },
+  { key: "select", value: 68, label: "模型筛选", detail: "去重、翻译并生成本地快照" },
+  { key: "wait", value: 82, label: "等待模型", detail: "等待 DeepSeek 返回筛选和推送结果" },
+  { key: "refresh", value: 92, label: "同步页面", detail: "写入新闻池并刷新推送列表" },
+];
+
+const PUSH_PROGRESS_PENDING_STEPS = PUSH_PROGRESS_STEPS.filter((step) => step.key !== "refresh");
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -108,6 +128,18 @@ function importanceScoreClass(value) {
 function formatError(error) {
   if (error instanceof Error && error.message) return error.message;
   return "请求失败";
+}
+
+function agentFailureReason(error) {
+  const detail = error?.detail;
+  if (
+    ["model_search_push_failed", "model_tool_arguments_invalid"].includes(
+      detail?.degradation_reason,
+    )
+  ) {
+    return detail?.error_message || detail?.message || formatError(error);
+  }
+  return detail?.degradation_reason || detail?.error_message || detail?.message || formatError(error);
 }
 
 function providerStateLabel(statusValue) {
@@ -188,6 +220,46 @@ function summarizeChatActions(actions) {
   if (actions?.push_news_count) parts.push(`推送 +${actions.push_news_count}`);
   if (actions?.candidates_written) parts.push(`候选 +${actions.candidates_written}`);
   return parts;
+}
+
+function pushProgressClass(progress) {
+  const tone = progress?.tone || "idle";
+  return `push-progress push-progress--${tone}`;
+}
+
+function PushProgress({ progress }) {
+  if (!progress?.visible) return null;
+  return (
+    <section className={pushProgressClass(progress)} aria-label="模型推送进度">
+      <div className="push-progress__header">
+        <div>
+          <strong>{progress.label}</strong>
+          <span>{progress.detail}</span>
+        </div>
+        <span className="push-progress__value">{progress.value}%</span>
+      </div>
+      <div
+        className="push-progress__track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress.value}
+        aria-label={progress.label}
+      >
+        <div className="push-progress__fill" style={{ width: `${progress.value}%` }} />
+      </div>
+      <div className="push-progress__steps">
+        {PUSH_PROGRESS_STEPS.map((step) => (
+          <span
+            className={progress.value >= step.value ? "is-complete" : ""}
+            key={step.key}
+          >
+            {step.label}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function NewsCard({ item, onFocus, onFollow, onOpen }) {
@@ -304,7 +376,70 @@ export function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatActions, setChatActions] = useState(null);
   const [chatBusy, setChatBusy] = useState(false);
+  const [pushProgress, setPushProgress] = useState(PUSH_PROGRESS_IDLE);
   const detailRequestRef = useRef(0);
+  const pushProgressTimerRef = useRef(null);
+  const pushProgressResetRef = useRef(null);
+
+  function clearPushProgressTimers() {
+    if (pushProgressTimerRef.current) {
+      window.clearInterval(pushProgressTimerRef.current);
+      pushProgressTimerRef.current = null;
+    }
+    if (pushProgressResetRef.current) {
+      window.clearTimeout(pushProgressResetRef.current);
+      pushProgressResetRef.current = null;
+    }
+  }
+
+  function startPushProgress() {
+    clearPushProgressTimers();
+    let stepIndex = 0;
+    setPushProgress({
+      ...PUSH_PROGRESS_PENDING_STEPS[stepIndex],
+      visible: true,
+      running: true,
+      tone: "running",
+    });
+    pushProgressTimerRef.current = window.setInterval(() => {
+      stepIndex = Math.min(stepIndex + 1, PUSH_PROGRESS_PENDING_STEPS.length - 1);
+      setPushProgress((current) => ({
+        ...current,
+        ...PUSH_PROGRESS_PENDING_STEPS[stepIndex],
+        visible: true,
+        running: true,
+        tone: "running",
+      }));
+    }, 1400);
+  }
+
+  function markPushProgressStep(stepKey) {
+    const step = PUSH_PROGRESS_STEPS.find((item) => item.key === stepKey);
+    if (!step) return;
+    setPushProgress((current) => ({
+      ...current,
+      ...step,
+      visible: true,
+      running: true,
+      tone: "running",
+    }));
+  }
+
+  function finishPushProgress(tone, detail) {
+    clearPushProgressTimers();
+    setPushProgress({
+      visible: true,
+      running: false,
+      value: 100,
+      label: tone === "error" ? "推送失败" : "推送完成",
+      detail,
+      tone,
+    });
+    pushProgressResetRef.current = window.setTimeout(() => {
+      setPushProgress(PUSH_PROGRESS_IDLE);
+      pushProgressResetRef.current = null;
+    }, 3600);
+  }
 
   async function refreshAll() {
     try {
@@ -332,15 +467,20 @@ export function App() {
   }
 
   async function runPush() {
+    if (pushProgress.running) return;
+    startPushProgress();
     setStatus("正在通过模型搜索推送");
     try {
       const result = await api.runAgentPush();
       setLastAgentRun(result?.run || null);
-      setStatus(`模型推送完成：${result?.run?.id || "已完成"}`);
+      markPushProgressStep("refresh");
       await refreshAll();
+      finishPushProgress("success", `已完成 ${result?.run?.id || "本轮推送"}`);
+      setStatus(`模型推送完成：${result?.run?.id || "已完成"}`);
     } catch (error) {
       setLastAgentRun(error.detail || null);
-      const reason = error.detail?.degradation_reason || error.detail?.error_message;
+      const reason = agentFailureReason(error);
+      finishPushProgress("error", reason || formatError(error));
       setStatus(`模型推送失败：${reason || formatError(error)}`);
     }
   }
@@ -513,6 +653,9 @@ export function App() {
 
   useEffect(() => {
     refreshAll();
+    return () => {
+      clearPushProgressTimers();
+    };
   }, []);
 
   const pageTitle = useMemo(
@@ -528,6 +671,8 @@ export function App() {
     }),
     [bundle],
   );
+
+  const pushBusy = pushProgress.running;
 
   return (
     <div className="app-shell">
@@ -576,12 +721,19 @@ export function App() {
             </span>
             <span>上次 {formatTime(bundle.last_push_at)}</span>
             <span>下次 {formatTime(bundle.next_push_at)}</span>
-            <button type="button" onClick={runPush} title="立即执行一轮推送">
-              <Play size={16} />
-              <span>刷新</span>
+            <button
+              className="push-trigger"
+              type="button"
+              onClick={runPush}
+              disabled={pushBusy}
+              title="立即执行一轮推送"
+            >
+              {pushBusy ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}
+              <span>{pushBusy ? "推送中" : "刷新"}</span>
             </button>
           </div>
         </header>
+        <PushProgress progress={pushProgress} />
 
         {active === "push" && (
           <>
@@ -694,9 +846,9 @@ export function App() {
                   </button>
                 </form>
                 <div className="hint-row">
-                  <button type="button" onClick={runPush}>
-                    <Play size={16} />
-                    <span>立即推送</span>
+                  <button type="button" onClick={runPush} disabled={pushBusy}>
+                    {pushBusy ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}
+                    <span>{pushBusy ? "推送中" : "立即推送"}</span>
                   </button>
                   <button type="button" onClick={createNewChat}>
                     <Plus size={16} />
@@ -892,6 +1044,12 @@ export function App() {
                 <strong>{searchStatus?.search_depth || "basic"}</strong>
                 <span>额度策略</span>
                 <strong>{searchStatus?.credit_policy || "basic search uses 1 Tavily API credit"}</strong>
+                <span>工具预算</span>
+                <strong>{searchStatus?.agent_max_tool_calls || "未配置"}</strong>
+                <span>搜索预算</span>
+                <strong>{searchStatus?.agent_max_search_queries || "未配置"}</strong>
+                <span>读 URL 预算</span>
+                <strong>{searchStatus?.agent_max_read_urls || "未配置"}</strong>
                 <span>探活</span>
                 <strong>{searchStatus?.live_check_note || "未执行"}</strong>
               </div>

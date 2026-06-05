@@ -16,6 +16,7 @@ def test_config_defaults_to_tavily_search_without_api_key(monkeypatch, tmp_path)
     assert config.search_api_key is None
     assert config.search_base_url == "https://api.tavily.com/search"
     assert config.search_timeout_seconds == 15.0
+    assert config.deepseek_timeout_seconds == 60.0
     assert config.agent_max_tool_calls == 16
     assert config.agent_max_search_queries == 8
     assert config.agent_max_read_urls == 20
@@ -27,6 +28,7 @@ def test_config_reads_search_provider_key_and_agent_budgets(monkeypatch, tmp_pat
     monkeypatch.setenv("ANEWS_SEARCH_API_KEY", "configured-search-key")
     monkeypatch.setenv("ANEWS_SEARCH_BASE_URL", "https://search.example/api")
     monkeypatch.setenv("ANEWS_SEARCH_TIMEOUT_SECONDS", "4.5")
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "75")
     monkeypatch.setenv("ANEWS_AGENT_MAX_TOOL_CALLS", "5")
     monkeypatch.setenv("ANEWS_AGENT_MAX_SEARCH_QUERIES", "3")
     monkeypatch.setenv("ANEWS_AGENT_MAX_READ_URLS", "7")
@@ -38,6 +40,7 @@ def test_config_reads_search_provider_key_and_agent_budgets(monkeypatch, tmp_pat
     assert config.search_api_key == "configured-search-key"
     assert config.search_base_url == "https://search.example/api"
     assert config.search_timeout_seconds == 4.5
+    assert config.deepseek_timeout_seconds == 75.0
     assert config.agent_max_tool_calls == 5
     assert config.agent_max_search_queries == 3
     assert config.agent_max_read_urls == 7

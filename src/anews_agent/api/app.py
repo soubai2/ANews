@@ -349,6 +349,9 @@ def create_app(config: AppConfig | None = None, *, enable_scheduler: bool = Fals
             **serialize(status),
             "live_check": False,
             "live_check_note": "状态只表示配置可用性；手动探活会消耗搜索额度。",
+            "agent_max_tool_calls": resolved_config.agent_max_tool_calls,
+            "agent_max_search_queries": resolved_config.agent_max_search_queries,
+            "agent_max_read_urls": resolved_config.agent_max_read_urls,
         }
 
     @app.patch("/api/ai/settings")
@@ -406,6 +409,7 @@ def build_push_service(
         ai_service=NewsAIService(
             settings=repository.get_ai_settings(),
             api_key=config.deepseek_api_key,
+            deepseek_timeout_seconds=config.deepseek_timeout_seconds,
         ),
     )
 

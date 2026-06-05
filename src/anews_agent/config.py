@@ -14,6 +14,7 @@ class AppConfig:
     deepseek_api_key: str | None
     deepseek_base_url: str
     deepseek_model: str
+    deepseek_timeout_seconds: float = 60.0
     push_interval_hours: int = 2
     search_provider: str = "tavily"
     search_api_key: str | None = None
@@ -48,6 +49,13 @@ class AppConfig:
                 "DEEPSEEK_MODEL",
                 "OPENAI_MODEL",
                 default="deepseek-v4-flash",
+            ),
+            deepseek_timeout_seconds=_float_setting_any(
+                file_values,
+                "DEEPSEEK_TIMEOUT_SECONDS",
+                "ANEWS_DEEPSEEK_TIMEOUT_SECONDS",
+                "ANEWS_AI_TIMEOUT_SECONDS",
+                default=60.0,
             ),
             push_interval_hours=_int_setting(file_values, "ANEWS_PUSH_INTERVAL_HOURS", 2),
             search_provider=_setting(file_values, "ANEWS_SEARCH_PROVIDER", default="tavily").strip()
@@ -121,6 +129,17 @@ def _int_setting(file_values: dict[str, str], name: str, default: int) -> int:
 
 def _float_setting(file_values: dict[str, str], name: str, default: float) -> float:
     value = _setting(file_values, name)
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _float_setting_any(file_values: dict[str, str], *names: str, default: float) -> float:
+    value = _setting(file_values, *names)
     if not value:
         return default
     try:

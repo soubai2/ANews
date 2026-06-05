@@ -69,6 +69,9 @@ def test_ai_and_search_status_make_degradation_visible(tmp_path):
     assert search_status["degraded"] is True
     assert search_status["degradation_reason"] == "search_api_key_missing"
     assert search_status["live_check"] is False
+    assert search_status["agent_max_tool_calls"] == 16
+    assert search_status["agent_max_search_queries"] == 8
+    assert search_status["agent_max_read_urls"] == 20
 
 
 def test_agent_push_without_deepseek_key_returns_visible_failed_run_and_trace(tmp_path):

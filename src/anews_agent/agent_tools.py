@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+import httpx
+
 from anews_agent.domain import ArticleSnapshot, CandidateNews, NewsItem, PushSelection
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import SearchRequest, SearchService
@@ -55,9 +57,11 @@ def build_default_tool_registry(
     repository: NewsRepository,
     preference_kb: PreferenceKnowledgeBase,
     search_service: SearchService,
+    max_search_results_per_call: int = 20,
     now: Callable[[], datetime] | None = None,
 ) -> AgentToolRegistry:
     clock = now or (lambda: datetime.now(timezone.utc))
+    search_result_limit = max(1, min(max_search_results_per_call, 20))
     registry = AgentToolRegistry()
 
     registry.register(
@@ -84,7 +88,11 @@ def build_default_tool_registry(
                 {
                     "query": {"type": "string"},
                     "topic": {"type": "string", "enum": ["general", "news", "finance"]},
-                    "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": search_result_limit,
+                    },
                     "time_range": {"type": "string"},
                     "start_date": {"type": "string"},
                     "end_date": {"type": "string"},
@@ -92,7 +100,7 @@ def build_default_tool_registry(
                 },
                 required=["query"],
             ),
-            handler=lambda args: _search_web(search_service, args),
+            handler=lambda args: _search_web(search_service, args, search_result_limit),
         )
     )
     registry.register(
@@ -102,11 +110,17 @@ def build_default_tool_registry(
             parameters=_object_schema(
                 {
                     "query": {"type": "string"},
-                    "max_results": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "max_results": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": search_result_limit,
+                    },
                 },
                 required=["query"],
             ),
-            handler=lambda args: _search_user_sources(repository, search_service, args),
+            handler=lambda args: _search_user_sources(
+                repository, search_service, args, search_result_limit
+            ),
         )
     )
     registry.register(
@@ -346,19 +360,23 @@ def _push_selection_item_schema() -> dict[str, Any]:
     }
 
 
-def _search_web(search_service: SearchService, args: dict[str, Any]) -> dict[str, Any]:
+def _search_web(
+    search_service: SearchService, args: dict[str, Any], max_results_limit: int
+) -> dict[str, Any]:
     query = _required_str(args, "query")
-    response = search_service.search(
-        SearchRequest(
-            query=query,
-            topic=_str_arg(args, "topic", "news"),
-            max_results=_int_arg(args, "max_results", 5, minimum=1, maximum=20),
-            time_range=_optional_str(args, "time_range"),
-            start_date=_optional_str(args, "start_date"),
-            end_date=_optional_str(args, "end_date"),
-            include_domains=_string_list(args.get("include_domains")),
-        )
+    request = SearchRequest(
+        query=query,
+        topic=_str_arg(args, "topic", "news"),
+        max_results=_int_arg(args, "max_results", 5, minimum=1, maximum=max_results_limit),
+        time_range=_optional_str(args, "time_range"),
+        start_date=_optional_str(args, "start_date"),
+        end_date=_optional_str(args, "end_date"),
+        include_domains=_string_list(args.get("include_domains")),
     )
+    try:
+        response = search_service.search(request)
+    except Exception as error:
+        return _search_error_result(search_service, error)
     return {
         "query_id": response.query.id,
         "provider": response.query.provider,
@@ -368,7 +386,10 @@ def _search_web(search_service: SearchService, args: dict[str, Any]) -> dict[str
 
 
 def _search_user_sources(
-    repository: NewsRepository, search_service: SearchService, args: dict[str, Any]
+    repository: NewsRepository,
+    search_service: SearchService,
+    args: dict[str, Any],
+    max_results_limit: int,
 ) -> dict[str, Any]:
     domains = [
         parsed.netloc
@@ -379,18 +400,56 @@ def _search_user_sources(
     ]
     if not domains:
         return {"results": [], "reason": "no_user_sources"}
-    response = search_service.search(
-        SearchRequest(
-            query=_required_str(args, "query"),
-            max_results=_int_arg(args, "max_results", 5, minimum=1, maximum=20),
-            include_domains=domains,
+    try:
+        response = search_service.search(
+            SearchRequest(
+                query=_required_str(args, "query"),
+                max_results=_int_arg(
+                    args, "max_results", 5, minimum=1, maximum=max_results_limit
+                ),
+                include_domains=domains,
+            )
         )
-    )
+    except Exception as error:
+        return _search_error_result(search_service, error, include_domains=domains)
     return {
         "query_id": response.query.id,
         "include_domains": domains,
         "results": [_serialize_search_result(result) for result in response.results],
     }
+
+
+def _search_error_result(
+    search_service: SearchService,
+    error: Exception,
+    *,
+    include_domains: list[str] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "query_id": None,
+        "provider": _search_provider_name(search_service),
+        "credits_used": None,
+        "results": [],
+        "degraded": True,
+        "degradation_reason": "search_timeout" if _is_timeout_error(error) else "search_failed",
+        "error_message": str(error),
+    }
+    if include_domains is not None:
+        result["include_domains"] = include_domains
+    return result
+
+
+def _search_provider_name(search_service: SearchService) -> str:
+    provider = getattr(search_service, "provider", None)
+    name = getattr(provider, "provider_name", "")
+    return str(name or "unknown")
+
+
+def _is_timeout_error(error: Exception) -> bool:
+    if isinstance(error, httpx.TimeoutException):
+        return True
+    message = str(error).lower()
+    return "timed out" in message or "timeout" in message
 
 
 def _read_url(search_service: SearchService, args: dict[str, Any]) -> dict[str, Any]:
@@ -471,7 +530,15 @@ def _select_push_items(
             repository.upsert_news(news)
             repository.upsert_candidate_news(replace(candidate, selected=True))
             news_id = news.id
-        elif not news_id and _str_arg(item, "title", "") and _str_arg(item, "url", ""):
+        elif news_id:
+            news = repository.get_news(news_id)
+            if news is None and _str_arg(item, "title", "") and _str_arg(item, "url", ""):
+                news = _news_from_selection_item(item, section=section, now=now)
+                repository.upsert_news(news)
+                news_id = news.id
+            elif news is None:
+                news_id = ""
+        elif _str_arg(item, "title", "") and _str_arg(item, "url", ""):
             news = _news_from_selection_item(item, section=section, now=now)
             repository.upsert_news(news)
             news_id = news.id

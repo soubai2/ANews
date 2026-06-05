@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 from anews_agent.agent_runtime import AgentRuntime
 from anews_agent.agent_tools import build_default_tool_registry
-from anews_agent.chat import ChatService
+from anews_agent.chat import ChatService, build_chat_service
+from anews_agent.config import AppConfig
 from anews_agent.domain import AISettings, AgentRun, CandidateNews
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import BasicWebReader, MockSearchProvider, SearchService
@@ -82,6 +83,23 @@ def make_chat_service(tmp_path, responses):
         now=lambda: now,
     )
     return repo, service, model, now
+
+
+def test_chat_builder_passes_configured_deepseek_timeout(tmp_path):
+    config = AppConfig(
+        db_path=tmp_path / "anews.db",
+        deepseek_api_key="deepseek-key",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-v4-flash",
+        deepseek_timeout_seconds=75.0,
+        search_provider="mock",
+    )
+    repo = NewsRepository(config.db_path)
+
+    service = build_chat_service(repo, config)
+
+    assert service.runtime is not None
+    assert service.runtime.model.provider.timeout == 75.0
 
 
 def test_chat_service_persists_degraded_message_without_deepseek_key(tmp_path):

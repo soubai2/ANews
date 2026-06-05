@@ -180,11 +180,13 @@ class NewsAIService:
         api_key: str | None,
         fallback: AIProvider | None = None,
         deepseek_provider: AIProvider | None = None,
+        deepseek_timeout_seconds: float = 20.0,
     ) -> None:
         self.settings = settings
         self.api_key = api_key
         self.fallback = fallback or FallbackAIProvider()
         self.deepseek_provider = deepseek_provider
+        self.deepseek_timeout_seconds = deepseek_timeout_seconds
 
     def enrich(self, news: NewsItem) -> AIEnrichment:
         if (
@@ -197,6 +199,7 @@ class NewsAIService:
         provider = self.deepseek_provider or DeepSeekProvider(
             api_key=self.api_key,
             settings=self.settings,
+            timeout=self.deepseek_timeout_seconds,
         )
         try:
             return provider.enrich(news)

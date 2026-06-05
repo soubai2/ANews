@@ -84,6 +84,29 @@ def tool_response(name="echo", arguments=None):
     }
 
 
+def raw_tool_response(name="echo", arguments="{}"):
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": arguments,
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+
 def final_response(content="done"):
     return {"choices": [{"message": {"role": "assistant", "content": content}}]}
 
@@ -248,7 +271,123 @@ def test_runtime_recovers_to_final_tools_when_exploration_budget_is_exhausted(tm
     )
 
 
-def test_runtime_rejects_malformed_tool_arguments(tmp_path):
+def test_runtime_filters_next_tools_after_phase_constrained_tool(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="search",
+            description="Search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"value": args.get("value", "")},
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="process",
+            description="Process search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"processed": args.get("value", "")},
+        )
+    )
+    model = FakeModel(
+        [
+            tool_response("search", {"value": "first"}),
+            tool_response("process", {"value": "selected"}),
+            final_response("done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        repository=repo,
+        registry=registry,
+        model=model,
+        tool_phase_allowed_names={"search": {"process"}},
+    )
+
+    result = runtime.run(run_type="manual_push", messages=[{"role": "user", "content": "x"}])
+    second_request_tool_names = {schema["function"]["name"] for schema in model.requests[1]["tools"]}
+    third_request_tool_names = {schema["function"]["name"] for schema in model.requests[2]["tools"]}
+
+    assert result.run.status == "success"
+    assert second_request_tool_names == {"process"}
+    assert third_request_tool_names == {"search", "process"}
+
+
+def test_runtime_records_phase_violation_and_keeps_required_processing_phase(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    registry = AgentToolRegistry()
+    registry.register(
+        AgentTool(
+            name="search",
+            description="Search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"value": args.get("value", "")},
+        )
+    )
+    registry.register(
+        AgentTool(
+            name="process",
+            description="Process search evidence",
+            parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+            handler=lambda args: {"processed": args.get("value", "")},
+        )
+    )
+    model = FakeModel(
+        [
+            tool_response("search", {"value": "first"}),
+            tool_response("search", {"value": "second"}),
+            tool_response("process", {"value": "selected"}),
+            final_response("done"),
+        ]
+    )
+    runtime = AgentRuntime(
+        repository=repo,
+        registry=registry,
+        model=model,
+        tool_phase_allowed_names={"search": {"process"}},
+    )
+
+    result = runtime.run(run_type="manual_push", messages=[{"role": "user", "content": "x"}])
+    calls = repo.list_agent_tool_calls(result.run.id)
+
+    assert result.run.status == "success"
+    assert [call.status for call in calls] == ["success", "failed", "success"]
+    assert calls[1].tool_name == "search"
+    assert calls[1].error_message
+    assert "Tool sequence violation" in calls[1].error_message
+    assert {schema["function"]["name"] for schema in model.requests[2]["tools"]} == {"process"}
+
+
+def test_runtime_records_bad_tool_arguments_and_allows_model_retry(tmp_path):
+    model = FakeModel(
+        [
+            raw_tool_response("echo", '{"value": "broken"'),
+            tool_response("echo", {"value": "recovered"}),
+            final_response("done"),
+        ]
+    )
+    repo, runtime = runtime_with_registry(tmp_path, [])
+    runtime.model = model
+
+    result = runtime.run(run_type="chat", messages=[{"role": "user", "content": "x"}])
+    calls = repo.list_agent_tool_calls(result.run.id)
+
+    assert result.run.status == "success"
+    assert result.final_content == "done"
+    assert [call.status for call in calls] == ["failed", "success"]
+    assert calls[0].tool_name == "echo"
+    assert calls[0].error_message
+    assert "Invalid tool arguments JSON" in calls[0].error_message
+    assert calls[1].result == {"echo": "recovered"}
+    assert any(
+        "tool_arguments_invalid" in message.get("content", "")
+        for request in model.requests
+        for message in request["messages"]
+        if message.get("role") == "tool"
+    )
+
+
+def test_runtime_records_malformed_tool_arguments_even_without_retry(tmp_path):
     bad_response = {
         "choices": [
             {
@@ -267,7 +406,13 @@ def test_runtime_rejects_malformed_tool_arguments(tmp_path):
     }
     repo, runtime = runtime_with_registry(tmp_path, [bad_response])
 
-    with pytest.raises(TypeError, match="object"):
+    with pytest.raises(RuntimeError, match="no fake response"):
         runtime.run(run_type="chat", messages=[{"role": "user", "content": "x"}])
 
-    assert repo.list_agent_runs()[0].status == "failed"
+    run = repo.list_agent_runs()[0]
+    calls = repo.list_agent_tool_calls(run.id)
+
+    assert run.status == "failed"
+    assert calls[0].status == "failed"
+    assert calls[0].error_message
+    assert "Invalid tool arguments JSON" in calls[0].error_message

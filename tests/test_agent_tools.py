@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from anews_agent.agent_tools import build_default_tool_registry
 from anews_agent.domain import AgentRun, AgentToolCall, NewsItem, Source
 from anews_agent.preferences_kb import PreferenceKnowledgeBase
 from anews_agent.search import BasicWebReader, MockSearchProvider, SearchService
+from anews_agent.services import NewsPushService
 from anews_agent.storage import NewsRepository
 
 
@@ -14,6 +16,33 @@ def build_registry(tmp_path):
     now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
     service = SearchService(
         provider=MockSearchProvider(),
+        repository=repo,
+        reader=BasicWebReader(fetch_text=lambda url: "<title>Doc</title><body>Body text</body>"),
+    )
+    registry = build_default_tool_registry(
+        repository=repo,
+        preference_kb=PreferenceKnowledgeBase(repo),
+        search_service=service,
+        now=lambda: now,
+    )
+    return repo, registry, now
+
+
+class TimedOutSearchProvider:
+    provider_name = "timedout"
+
+    def status(self):
+        raise NotImplementedError
+
+    def search(self, request, *, run_id=None, created_at=None):
+        raise httpx.ReadTimeout("The read operation timed out")
+
+
+def build_timeout_registry(tmp_path):
+    repo = NewsRepository(tmp_path / "anews.db")
+    now = datetime(2026, 6, 5, 9, 0, tzinfo=timezone.utc)
+    service = SearchService(
+        provider=TimedOutSearchProvider(),
         repository=repo,
         reader=BasicWebReader(fetch_text=lambda url: "<title>Doc</title><body>Body text</body>"),
     )
@@ -71,6 +100,40 @@ def test_registry_executes_preferences_search_and_read_tools(tmp_path):
     assert repo.get_search_query(search["query_id"]) is not None
     assert document["title"] == "Doc"
     assert repo.get_retrieved_document("https://example.com/news") is not None
+
+
+def test_search_web_returns_visible_degradation_when_provider_times_out(tmp_path):
+    repo, registry, now = build_timeout_registry(tmp_path)
+
+    search = registry.execute("search_web", {"query": "AI chips", "max_results": 3})
+
+    assert search["provider"] == "timedout"
+    assert search["results"] == []
+    assert search["degraded"] is True
+    assert search["degradation_reason"] == "search_timeout"
+    assert "timed out" in search["error_message"]
+    assert search["query_id"] is None
+    assert repo.list_search_queries_for_run(None) == []
+
+
+def test_search_user_sources_returns_visible_degradation_when_provider_times_out(tmp_path):
+    repo, registry, now = build_timeout_registry(tmp_path)
+    repo.upsert_source(
+        Source.from_url(
+            name="Company Blog",
+            url="https://example.com/blog",
+            source_type="blog",
+            user_specified=True,
+        )
+    )
+
+    search = registry.execute("search_user_sources", {"query": "AI", "max_results": 2})
+
+    assert search["include_domains"] == ["example.com"]
+    assert search["results"] == []
+    assert search["degraded"] is True
+    assert search["degradation_reason"] == "search_timeout"
+    assert "timed out" in search["error_message"]
 
 
 def test_registry_executes_news_pool_sources_follow_and_trace_tools(tmp_path):
@@ -187,6 +250,63 @@ def test_select_push_items_materializes_selected_candidates_as_news(tmp_path):
     assert stored_news.source_name == "Example Tech"
     assert stored_news.pushed is True
     assert stored_news.recommendation_reasons == ["fresh search evidence"]
+
+
+def test_select_push_items_materializes_items_when_model_supplies_unstored_news_ids(tmp_path):
+    repo, registry, now = build_registry(tmp_path)
+    run = AgentRun.start(run_type="chat", started_at=now)
+    repo.upsert_agent_run(run)
+    registry.execute(
+        "write_candidate_news",
+        {
+            "run_id": run.id,
+            "items": [
+                {
+                    "id": "model_candidate_1",
+                    "candidate_id": "model_candidate_1",
+                    "news_id": "model_news_1",
+                    "title": "AI chip update",
+                    "url": "https://example.com/ai-chip-unstored-id",
+                    "source_name": "Example Tech",
+                    "summary": "A company shipped an AI chip.",
+                    "published_at": "2026-06-04T10:00:00+00:00",
+                    "score": 8.5,
+                }
+            ],
+        },
+    )
+
+    selections = registry.execute(
+        "select_push_items",
+        {
+            "run_id": run.id,
+            "items": [
+                {
+                    "section": "latest",
+                    "candidate_id": "model_candidate_1",
+                    "news_id": "model_news_1",
+                    "title": "AI chip update",
+                    "url": "https://example.com/ai-chip-unstored-id",
+                    "source_name": "Example Tech",
+                    "summary": "A company shipped an AI chip.",
+                    "published_at": "2026-06-04T10:00:00+00:00",
+                    "rank": 1,
+                    "reason": "chat-requested push",
+                }
+            ],
+        },
+    )
+    news_ids = repo.get_last_push_news_ids()
+    stored_news = repo.get_news(news_ids[0])
+    bundle = NewsPushService(repository=repo, source_adapters=[], ai_service=None).current_bundle(now)
+
+    assert news_ids
+    assert selections["news_ids"] == news_ids
+    assert selections["news_ids"] != ["model_news_1"]
+    assert stored_news is not None
+    assert stored_news.title == "AI chip update"
+    assert stored_news.url == "https://example.com/ai-chip-unstored-id"
+    assert [item.id for item in bundle.latest] == news_ids
 
 
 def test_candidate_relevance_score_becomes_news_importance_score(tmp_path):
